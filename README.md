@@ -848,6 +848,17 @@ the *same* Cookie's sessions where safe song was live. Same story for
   100 kbps GFSK, PN9 whitening) without needing decryption — even a
   "detect Cookies nearby by SRCADDR" mode would be useful without
   dragging out an SDR.
+- **rtl_433 native SimpliciTI decoder.** Right now we invoke rtl_433
+  with a raw `-X` flex-decoder to get bytes, then de-whiten and parse
+  in Python (`scratch/cc1101_dewhiten.py` + `scratch/parse_frames.py`).
+  All of that could be contributed upstream as a proper rtl_433
+  device decoder — the protocol constants are well-defined (CC1101
+  100 kbps GFSK, PN9 whitening seed `0x1FF`, SimpliciTI network-layer
+  frame per Spec Table 1) and would give any rtl_433 user JSON output
+  with named fields. SimpliciTI was used in far more than just
+  sen.se's products (TI Chronos watch, various sensor networks, etc.)
+  so a decoder in `rtl_433/src/devices/simpliciti.c` would benefit
+  more than this project.
 
 ## References
 
