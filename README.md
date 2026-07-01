@@ -645,32 +645,47 @@ bridge to Home Assistant" section for hardware options).
 Now that we know the RF protocol is **TI SimpliciTI** (see UART boot
 log), the shortest path becomes:
 
-**A. Build a SimpliciTI Access Point that speaks to Cookies:**
+**A. Build our own SimpliciTI AP and let the Cookies link to us
+(no need to power the actual Mother):**
 
-1. **Pull TI's SimpliciTI reference implementation** (last public
-   drop was `SimpliciTI-CCS-1.2.0` or similar; still archived in
-   TI's forums and elsewhere online).
-2. **Configure it to run on a CC1101 module** wired to a Pi (or an
-   ESP32, or a T-Embed CC1101) — SimpliciTI's HAL is portable.
-   Match the Cookie's PHY: 915 MHz US band, 100 kbps GFSK, sync
-   `0xD391`, whatever channel/PAN-ID we observe live.
-3. **Compare our observed frames** to SimpliciTI's documented header
-   layout to figure out which SimpliciTI application-layer message
-   the Cookies send (probably a periodic `Link_Send` with a small
-   payload, plus responses to `Poll`).
-4. **Issue the poll from our AP** and receive the Cookie's
-   stored-data reply. Presumably temperature + accel history are in
-   there — that's what Mother pulled to display.
+The Cookies broadcast Join frames every ~1 min with the sen.se
+network-wide Join Token `08 07 06 05` visible in the clear. Any
+device that speaks SimpliciTI's Join reply back at them will get
+them to link. The Cookie doesn't authenticate the Mother's identity
+beyond the shared Token.
 
-**B. Sniff a real Mother↔Cookie exchange** to shortcut step 3:
+Steps:
+
+1. Configure a CC1101 module on our AP host to match sen.se's PHY:
+   915 MHz, 100 kbps GFSK, sync `0xD391`, PN9 whitening on,
+   variable-length packets, no encryption.
+2. Listen for port-3 Join frames whose payload contains `08 07 06 05`
+   at offset 3.
+3. Send a unicast reply per Spec Table 16:
+   `[Req Reply=0x81] [TID echoed] [any 4-byte LinkToken we pick]
+   [FUNC/LEN=0] [Key=(empty since sen.se doesn't encrypt)]`.
+4. Assign each newly-linked Cookie a 4-byte AP-side address to
+   receive its subsequent unicast traffic.
+5. Log everything the Cookie sends after linking — that's where
+   the sensor uploads live.
+
+Reference implementations available:
+
+- Our vendored `simpliciti-1.2.0-mspgcc/Projects/Applications/` and
+  `Components/nwk_applications/nwk_join.c` — TI's own AP + Join
+  handler, ready to port to a Pi or ESP32 CC1101 host.
+- `seekintoo/iSmartAlarm` (GitHub) — GNU Radio + Python 2 SimpliciTI
+  RX pipeline attacking a similar CC1110-based device, complete
+  with PN9 de-whitening and Join spoofing. See References below.
+
+**B. (Fallback) Sniff a real Mother↔Cookie exchange** if implementing
+our own AP hits ambiguities:
 
 1. Sit the Mother next to an RTL-SDR (it happily loops
    `Reset RF... / Starting SimpliciTI...` without cloud).
-2. Capture both sides at 915 MHz. The Mother's downlink frames
-   reveal exactly which SimpliciTI message it issues and how it
-   addresses a specific Cookie.
-3. That collapses step 3 above from "read SimpliciTI docs" to
-   "copy what the Mother did."
+2. Capture both sides at 915 MHz. The Mother's Join reply reveals
+   the exact FUNC/LEN and Key byte layout sen.se picked and gives
+   us the Mother's SimpliciTI address for reference.
 
 **C. Firmware dump as a fallback / verification** (see
 "Firmware extraction path" below): dump the SPI flash if steps
@@ -872,3 +887,19 @@ the *same* Cookie's sessions where safe song was live. Same story for
 - ccarlo64/freemother (cloud emulator, no temp support): https://github.com/ccarlo64/freemother
 - Forum thread that pointed at freemother: https://nabaztag.forumactif.fr/t15361
 - TI CC1101 datasheet: https://www.ti.com/product/CC1101
+
+Prior art on SimpliciTI reverse engineering / attack:
+
+- **Seekintoo / Dayton Pidhirney, "DIY Smart Home Security? Meh.."**
+  (March 2017) — reverse-engineered iSmartAlarm, a TI CC1110-based
+  smart-home alarm system that also uses SimpliciTI. Found the ASCII
+  string `"SimpliciTI's Key"` in the firmware (iSmartAlarm used TI's
+  default key), built a GNU Radio flowgraph + PN9 de-whitening +
+  XTEA decryption pipeline, and demonstrated spoofing / disabling
+  the alarm. Original blog:
+  <https://blog.seekintoo.com/diy-smart-home-security-meh.html>
+  Code: <https://github.com/seekintoo/iSmartAlarm> — see
+  `scripts/ism_rx.py` for a reference SimpliciTI RX in Python 2
+  using GNU Radio + XTEA + GoodFETCC.
+- **rtl-sdr.com writeup of the same work:**
+  <https://www.rtl-sdr.com/identifying-issues-that-can-be-used-to-disable-iot-alarms/>
