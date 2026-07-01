@@ -881,15 +881,17 @@ Fully assembled ESP32 + CC1101 boards, cheapest first:
 
 | option | price | notes |
 |---|---|---|
-| **Evil Crow RF** | ~$27 on AliExpress / Tindie | Two CC1101 radios + ESP32 on one open-hardware PCB. Overkill radios (we only need one) but the price is right. |
-| **LilyGO T-Embed CC1101** | ~$50 | Fully assembled with 1.9" TFT + battery. Well-supported by the `dbuezas/esphome-cc1101` ESPHome external_component so the software path is the smoothest. |
+| **Evil Crow RF** | ~$27 on AliExpress / Tindie | Two CC1101 radios + ESP32 on one open-hardware PCB. Overkill radios (we only need one) but the price is right. Bare board (no display). |
+| **M5Stack Basic + M5Stack CC1101 Module** | ~$32 + $11 = **~$43** | Stacked, no wiring. CC1101 module is 855–925 MHz with SMA antenna. Original ESP32, LCD, 3 buttons, USB-C. |
+| **M5Stack CoreS3 + M5Stack CC1101 Module** | ~$50 + $11 = ~$61 | ESP32-S3 + BLE 5 (better BTHome broadcast side than the Basic), touch display, camera. |
+| **LilyGO T-Embed CC1101** | ~$50 | Fully assembled with 1.9" TFT + battery. Well-supported by the `dbuezas/esphome-cc1101` ESPHome external_component. Software path is the smoothest of the four options. |
 
 Other assembled boards on Tindie (CaracalDB, FlipMods Ultra V3,
 Orange Dragon Mayhem, Rabbit-Labs CC1101 expansion) are marketed as
 Flipper Zero add-ons but the ESP32 + CC1101 combination is USB-accessible.
 They typically bundle extras we don't need (NRF24L01, SD card, case for
-Flipper) and price out at $50–80. The T-Embed is the cleanest
-purpose-fit for the same price range.
+Flipper) and price out at $50–80. The T-Embed and M5Stack Basic are the
+cleanest purpose-fit options.
 
 **nRF52 + CC1101**: no ready-made board exists. nRF52 has cleaner
 native BLE than ESP32 (lower-power, better BTHome-broadcast fit), but
