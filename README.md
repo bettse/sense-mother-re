@@ -1,0 +1,680 @@
+# sen.se Mother / Cookie — Reverse Engineering Notes
+
+Project goal: figure out whether the original sen.se Mother hub + temperature
+Cookie (defunct since 2017 sen.se liquidation) can be revived enough to push
+bed-surface temperature readings into Home Assistant.
+
+Origin: Claude Code session `9d738d5b-6725-47fb-9432-fcc72f327f4b`
+(`~/.claude/projects/-Users-bettse-Downloads/9d738d5b-6725-47fb-9432-fcc72f327f4b.jsonl`).
+
+This folder collects FCC filings for the original hardware and my analysis of
+what's actually inside.
+
+## Why this folder exists
+
+The "buy a Mother on eBay and run it" path requires either:
+
+1. The original sen.se cloud (gone — French company went into judicial
+   liquidation in 2017, `in.sen.se` is dead).
+2. A drop-in cloud emulator — `ccarlo64/freemother` exists but only handles
+   the sleep Cookie (Feed type 6) and pings (Feed type 1). It does **not**
+   parse temperature Cookies. Project last touched January 2021, 5 stars,
+   4 open issues, 0 closed. Not a complete solution.
+3. Bypass the Mother entirely — sniff the Cookie's 915 MHz radio directly
+   with an SDR or a CC1101-compatible receiver and decode the frames.
+
+Path 3 is what this folder is research toward. That requires understanding
+the Cookie's RF protocol, which is undocumented but legally documented just
+enough in the FCC filings to bootstrap.
+
+## Source: FCC filings (US only — 915 MHz)
+
+| FCC ID | Product | Date | URL |
+|---|---|---|---|
+| 2ABGNCOO001 | Cookie (COO001) | 2014-03-31 | https://fcc.report/FCC-ID/2ABGNCOO001/ |
+| 2ABGNMOM001 | Mother (MOM001) | 2014-03-31 | https://fcc.report/FCC-ID/2ABGNMOM001/ |
+| 2ABGNPEA001 | ThermoPeanut (PEA001) — BLE, NOT useful | 2016-06-21 | https://fcc.report/FCC-ID/2ABGNPEA001/ |
+
+EU-region units use 868 MHz (CE/ETSI filings, not FCC). Confirm region of any
+eBay unit before tuning a receiver. Test report serial numbers / labels in the
+filings here are for the 902-928 MHz ISM band US version only.
+
+### Why ThermoPeanut isn't a shortcut
+
+It's BLE (2.4 GHz), but sen.se put a per-device auth key on the server side.
+With the cloud dead, the key handshake can't be completed. The device pairs
+but no decoded payload is accessible. Documented for completeness, not as a
+path forward.
+
+## What's in this folder
+
+```
+sense-mother-re/
+├── README.md                      this file
+├── fetch.sh                       re-pull all FCC exhibits idempotently
+├── sen-se-mom4co-us-specsheet-12.pdf   original sen.se marketing spec sheet
+├── fcc/                           FCC exhibits, both devices
+│   ├── cookie/
+│   │   ├── internal-photos.pdf    PCB photos (low-res; chip markings illegible)
+│   │   ├── external-photos.pdf
+│   │   ├── rf-test-report.pdf     RF parameters — see "RF Findings" below
+│   │   ├── user-manual.pdf
+│   │   ├── label-info.pdf
+│   │   ├── label-location.pdf
+│   │   ├── test-setup.pdf
+│   │   └── extracted/             raw images extracted via pdfimages
+│   └── mother/
+│       ├── internal-photos.pdf    PCB photos — main board + radio daughtercard
+│       ├── external-photos.pdf
+│       ├── rf-test-report.pdf
+│       ├── user-manual.pdf
+│       ├── label-info.pdf
+│       ├── label-location.pdf
+│       ├── test-setup.pdf
+│       └── extracted/
+├── teardown/                      bench teardown photos
+│   └── mother/                    Mother PCBs after disassembly (2026-06-30)
+├── captures/                      RF captures, one dir per session
+└── scratch/                       analysis scripts
+```
+
+## What the FCC photos actually show
+
+### Cookie (COO001)
+
+Pawn-shaped 2-layer PCB, silkscreen marked "V2.9b". Round bottom + narrower
+stem. Visual estimate from the ruler in the photo: round section ~24 mm
+diameter, total board height ~35 mm.
+
+Front side carries:
+
+- One small QFN package (radio + MCU SoC, likely combined — see below)
+- A second smaller chip (probably the temperature sensor — could be a
+  TMP102, SHT2x, MCP9808-class I2C sensor)
+- Crystal oscillator + matching passives
+- A few discrete passives near the antenna
+
+Back side carries:
+
+- PCB trace antenna (meander/F-style, on the round bottom area)
+- Two circular contact pads for a **CR2016** coin cell (confirmed by the
+  sen.se spec sheet — 4 mm total Cookie thickness rules out CR2032).
+
+**Cannot identify the radio chip from these photos** — the FCC submission used
+~700 px JPEGs and silkscreen markings are blurred. The chip class is inferable
+from the RF behavior (see below) but exact part number requires physical
+inspection of an actual Cookie under magnification.
+
+### Cookies are all the same hardware
+
+Important sourcing note: there is **only one Cookie SKU**, not separate
+"temperature / sleep / drink / presence" variants. The FCC filing has a single
+model number (COO001), and the user manual page 1 states it directly:
+
+> "So many skills in just one tiny sensor. Motion Cookies are seamlessly
+> reprogrammed according to what you want to use them for. You no longer need
+> a specific device for each one of your needs."
+
+What sen.se sold as "apps" was 100% cloud-side interpretation. Every Cookie
+has the same accelerometer + temperature + battery payload; the Mother (and
+cloud) just decided which fields to surface. Marketing called them "Motion
+Cookies" — strongly implying the accelerometer was primary and temperature
+rode along on every transmission for free.
+
+Implications:
+
+- Buy any Cookie on eBay — listings won't be (and shouldn't be) labeled by
+  "type." Shop on quantity and condition.
+- Decoding one Cookie's frame gives you temperature for all of them.
+- Multiple Cookies = multi-zone bed sensing or redundancy. Frames should
+  carry a unique device ID byte for routing.
+
+### Mother (MOM001)
+
+Two-board sandwich:
+
+- Main PCB: ARM-class MCU (large QFN, mid-board), TSSOP package (probably
+  flash/EEPROM or power management), large electrolytic cap, multiple
+  smaller QFNs. The Mother needs WiFi/Ethernet for the in.sen.se uplink
+  plus its proprietary 915 MHz downlink.
+- Radio daughtercard: looks like essentially the same 915 MHz radio module
+  as the Cookie, with its own PCB trace antenna. Manually scrawled "wddo1"
+  silkscreen on the antenna area in the photo.
+
+Same limitation — chip markings illegible in the FCC photos.
+
+## RF findings (from Cookie test report ES131204018E)
+
+| Parameter | Value | Note |
+|---|---|---|
+| Operating frequency | 915 MHz | Single fixed channel |
+| 99% occupied BW | 362.73 kHz | |
+| 20 dB BW | 388.34 kHz | |
+| Channel count | 1 | Confirmed by FCC Part 15.249 cert |
+| Modulation | (not stated explicitly) | Inferred 2-FSK/GFSK from spectrum shape |
+| Antenna | PCB integrated, 0 dBi | |
+| Power supply | 3 V (CR2032) | |
+| TX duty cycle | Intermittent | Typical sensor-node behavior |
+
+Critical inference: **Part 15.249 is the certification for non-hopping,
+non-spread-spectrum low-power intentional radiators.** This rules out
+frequency hopping — the Cookie transmits at 915 MHz fixed. No FHSS chase
+logic needed in a receiver.
+
+Modulation type isn't named in the test report (typical — they only test
+emissions compliance, not protocol). But: 362 kHz occupied BW at 915 MHz
+with a bell-shaped spectrum is a textbook 2-FSK / GFSK signature, almost
+certainly **100-250 kbps**. The bandwidth aligns with TI CC1101 standard
+configs at ~250 kbps GFSK.
+
+Most probable radio chip family (cannot confirm without physical teardown):
+
+- TI **CC1101** — standalone 915 MHz transceiver, paired with separate MCU
+- TI **CC1110/CC1111** — CC1101 radio + 8051 MCU in one QFN36, very popular
+  for sensor nodes in 2013-2014
+- Silicon Labs **Si446x** — similar specs, less common in EU-designed nodes
+- Semtech **SX12xx** — Lora-capable but also supports plain FSK
+
+CC1110/CC1111 is the educated guess — single QFN matching what's visible,
+common French/EU IoT-startup choice, supports the bandwidth shown.
+
+## Reverse engineering plan
+
+### Phase 1: physical confirmation (need an actual Cookie)
+
+1. Buy a Mother + at least one Cookie on eBay (any Cookie — they're
+   identical hardware; see "Cookies are all the same hardware" above).
+   Multiple Cookies cheap is better than one expensive one. The Mother
+   itself isn't strictly required for sniffing, but useful for confirming
+   the Cookie is alive and TXing.
+2. Inspect Cookie PCB under a USB microscope. Read radio chip markings.
+3. Confirm region (FCC US 915 MHz vs CE EU 868 MHz). Match SDR tuning.
+4. Battery type: **CR2016** (confirmed by sen.se spec sheet).
+
+### Phase 2: capture
+
+Sniff the Cookie's transmissions while it's powered on. Two viable rigs:
+
+- **RTL-SDR** ($30) — cheapest. Covers 915 MHz. Limited to ~2.4 MHz
+  bandwidth (more than enough for a 362 kHz signal). Use with:
+  - **Universal Radio Hacker (URH)** — visual demod + framing analysis.
+    Built exactly for this kind of work. https://github.com/jopohl/urh
+  - **rtl_433** — already has decoders for ~200 different 433/868/915 MHz
+    sensor protocols; worth trying first in case sen.se used a stock
+    protocol on top of CC1101. https://github.com/merbanan/rtl_433
+- **HackRF One** ($300) — broader bandwidth, TX-capable if you ever want
+  to simulate a Cookie. Probably overkill for this.
+
+URH workflow:
+
+1. Tune to 915 MHz, sample rate 2 MS/s, AM/FM demod to identify the burst.
+2. Switch to FSK demod, eyeball the symbol rate from zero crossings.
+3. Auto-detect framing (preamble, sync word, length, payload, CRC).
+4. Capture multiple Cookies / temperatures / battery levels to build a
+   training set for protocol inference.
+
+rtl_433 workflow:
+
+1. Run with `-A` (analyze mode) to see if any existing decoder matches.
+2. If unknown, use `-f 915M -s 250k -X "n=sense,m=FSK_PCM,..."` to define
+   a custom decoder once symbol rate / sync word are known from URH.
+
+### Phase 3: decode
+
+Realistic frame structure to look for (typical sub-GHz IoT pattern):
+
+- Preamble: 0xAAAA... (alternating bits for clock recovery)
+- Sync word: 2-4 bytes (chip default if they didn't customize)
+- Length byte
+- Cookie unique ID (likely the same digits printed on the Cookie back)
+- Sequence counter
+- Payload type byte (this is what would distinguish temp/sleep/presence)
+- Payload (temperature as int16, probably 0.01°C steps or similar)
+- CRC16
+
+Sen.se's protocol is almost certainly unencrypted — 2013-vintage French
+startup, battery-life-constrained device, no key exchange in the photos.
+
+**Confirmed beaconing behavior (from the spec sheet):** "Constantly signal
+their presence to the closest Mother" + "Can stock up to 15 days of data
+when away from Mother's range." Implication: the Cookie transmits its own
+presence beacons periodically without needing a paired Mother. We don't
+have to spoof an ack or get the Mother online to sniff. Shaking the Cookie
+will likely increase TX rate (accelerometer event), but even idle the
+device should beacon. Battery life math (CR2016 ≈ 90 mAh, 6–12 month
+autonomy) implies idle beacon period in the range of minutes, not seconds
+— budget several minutes per capture session.
+
+### Phase 4: bridge to Home Assistant
+
+Once frames decode, five viable integration paths ordered by friction:
+
+**1. rtl_433 → MQTT → HA** (lowest friction; bench-grade)
+- Tools used during decoding *are* the integration. Single deployment.
+- rtl_433 publishes MQTT with HA-discovery format → sensor auto-appears
+  in HA. No YAML.
+- Needs a Linux host (Pi Zero 2 W is fine) and an RTL-SDR ($30).
+- Requires running a Linux box you didn't already have.
+
+**2. LilyGO T-Embed CC1101 + ESPHome** (preferred for this project)
+- ESP32-S3 dev board with CC1101 covering 779-928 MHz built in, color
+  display, battery, antenna. Ships blank; flash whatever you want.
+  https://www.lilygo.cc/products/t-embed-cc1101
+- ESPHome external_component `dbuezas/esphome-cc1101` (actively maintained
+  as of mid-2026) provides:
+  - Raw RX exposed as `remote_receiver` source for lambda decoders
+  - RSSI sensor
+  - Runtime-tunable frequency and bandwidth as HA `number` entities —
+    very useful during bring-up, you can sweep from the HA UI
+  - Multi-receiver per node supported
+  - https://github.com/dbuezas/esphome-cc1101
+- Native ESPHome API to HA. No MQTT broker required.
+- No Linux box anywhere.
+- **Caveat:** writing an FSK frame parser as a C++ lambda is harder than
+  an rtl_433 `-X` decoder string. You handle preamble lock, sync word
+  detection, bit unpacking, CRC in lambda land per pulse-edge. Plan to
+  prototype the decoder in rtl_433 first (on a borrowed laptop with a
+  borrowed RTL-SDR) and *port* the working logic to the lambda — then
+  the T-Embed becomes the permanent receiver.
+
+**3. OpenMQTTGateway on ESP32 + CC1101**
+- Pre-built multi-protocol firmware (sub-GHz, BLE, 433 MHz, IR).
+- HA discovery built-in; new protocols added by PR.
+- Middle ground between rtl_433 and bespoke ESPHome.
+- https://docs.openmqttgateway.com/
+
+**4. Pi + bare CC1101 via SPI + Python**
+- $3 CC1101 module wired to Pi GPIO. Cheaper than RTL-SDR.
+- Libraries like `pyCC1101` exist but are minimal; framing is on you.
+- Publish to MQTT.
+
+**5. Custom HA integration (`custom_component`)**
+- Python integration talking to CC1101 over network/serial/MQTT.
+- High effort, low payoff unless you plan to publish for others.
+
+The Mother itself becomes unnecessary in all five paths — the Cookies talk
+directly to your receiver. The Mother only existed to NAT 915 MHz → WiFi →
+sen.se cloud. Keep it as a shelf curio.
+
+**Recommended path for this project:** decode with **#1 (rtl_433 on any
+laptop + RTL-SDR)** because the toolchain is purpose-built for sub-GHz
+decoder development. Then deploy with **#2 (T-Embed CC1101 + ESPHome)** for
+the permanent always-on receiver next to the bed. RTL-SDR retires to a
+drawer for the next project.
+
+> **Note (post-bench-session):** the passive RX-only paths (#1 and a
+> TX-disabled #2) get you the Cookie's *presence* and *device ID* but
+> not its sensor readings — those aren't in the periodic beacons; they're
+> held locally until Mother polls for them. To actually read bed
+> temperature, the receiver has to transmit Mother's downlink request.
+> That bumps the recommendation to **TX-capable hardware** — either #2
+> (the T-Embed CC1101 *is* TX-capable, the radio block supports it),
+> #3 (OpenMQTTGateway with a CC1101 module), or #4 (Pi + CC1101). RTL-SDR
+> alone cannot fulfill the end-to-end goal. See "Experiments run" and
+> "Open work to enable read-out" below for what was actually measured.
+
+## Time / difficulty estimate
+
+Original guess was 20–40 hours for the SDR-side decode. Actual elapsed
+for the passive layer was closer to **an afternoon of bench work** —
+rtl_433 turned out to handle the protocol natively once we identified
+the CC1101 default-config sync word, and three Cookies were enough to
+nail down the device-ID byte positions.
+
+But that passive layer **doesn't get us bed temperature.** As documented
+in "Experiments run" below, beacons only carry presence + ID; sensor
+data is buffered and uploaded on Mother's request. So the project as
+stated still needs another work session of comparable size to capture
+a Mother↔Cookie exchange and replicate Mother's downlink with TX
+hardware.
+
+## RF capture findings (June 2026 bench session)
+
+Captured live transmissions from a real Cookie powered by a CR2016 next to
+an RTL-SDR antenna. Files in `captures/run3/` (touch-test with cookie on
+antenna, RTL-SDR gain locked to 0). Analyzers in `scratch/`.
+
+### Silicon — Cookie (confirmed by physical inspection)
+
+The largest IC on the Cookie PCB reads:
+
+```
+CC430
+F5137
+TI 36K E
+A32Y G4
+```
+
+That's **TI CC430F5137** — an MSP430 16-bit MCU + CC1101 sub-1 GHz radio
+in one QFN package. Everything we measured over the air now has an
+authoritative explanation: the radio block is literally CC1101.
+
+### RF parameters
+
+All defaults of the CC1101 "Standard" 100 kbps GFSK preset. The Cookie
+firmware appears to have taken the SmartRF Studio defaults essentially
+unchanged.
+
+- **Modulation: 2-GFSK** (CC1101 default)
+- **Symbol rate: 99.97 kbps** (CC1101's "100 kbps" preset)
+- **Deviation: ~±50 kHz** (CC1101 default for this preset)
+- **Center frequency: 915.000 MHz**, very stable
+- **Sync word: `0xD391`**, used in 16-bit and sometimes doubled 32-bit
+  form across bursts (CC1101 `MDMCFG2.SYNC_MODE` 2 vs 3) — this is the
+  CC1101 chip default sync word
+- **Burst duration: ~1.8–3.5 ms** → ~30 bytes including
+  preamble + sync + length + payload + CRC
+- **Idle beacon period: ~10–20 s** (matches the spec sheet's "constantly
+  signal presence" line). Some bursts are doubled (~1 s apart).
+
+### Decoding live with rtl_433
+
+rtl_433 has a flexible-decoder framework that handles this protocol
+cleanly with one line:
+
+```bash
+rtl_433 -f 915M -s 2400000 -g 0 \
+        -X 'n=cookie,m=FSK_PCM,s=10,l=10,r=400,preamble=d391' \
+        -F json:hits.json -F log:rtl433.log
+```
+
+Notes on the flags:
+- `-f 915M` — US ISM band; use `868M` for EU Cookies
+- `-s 2400000` — 2.4 MS/s gives ~24 samples per 10 µs symbol, plenty
+- `-g 0` — minimum LNA gain; required when the Cookie is touching the
+  antenna or it clips. Higher gain is fine for room-scale distances.
+- `m=FSK_PCM,s=10,l=10` — 10 µs short = 10 µs long, i.e. 100 kbps NRZ
+- `r=400` — 400 µs reset gap between frames
+- `preamble=d391` — CC1101 default sync, used to lock byte alignment
+
+Each decoded frame lands in `hits.json` as a "cookie" model, e.g.:
+
+```
+{"model":"cookie","data":"d391f41ee265129a943ec27dd259764e", ...}
+```
+
+### Frame structure (after 5-min captures of both Cookies)
+
+Long stationary captures of both Cookies through the rtl_433 decoder
+yielded 20 frames (awesome you) and 31 frames (safe song). Grouping by
+byte 0 and then by the magic at bytes 2–4 reveals **two dominant
+patterns shared by both Cookies**:
+
+#### Pattern X — "presence" (≈75% of frames)
+
+```
+byte:  0       1   2   3   4    5   6   7   8    9   10   11..end
+       [type]  1E  E2  65  12   [ — device-bytes — ]  ?  D2  [seq+CRC]
+```
+
+- byte 0: frame type, observed `0xF4` and `0xEC` (and rarely `0xE8` etc)
+- bytes 1–4: `1E E2 65 12` — protocol header, same across both Cookies
+- bytes 5–8: per-Cookie constant — **safe song = `EA DF 32 FF`**,
+  **awesome you = `9A 94 3E C2`**
+- byte 9: mostly `0x7D` for awesome you, mix of `7D / 79 / FF` for safe
+  song
+- byte 10: mostly `0xD2`
+- last 2–3 bytes: change every frame → likely sequence counter + CRC
+
+#### Pattern α — "alt" (≈15% of frames)
+
+```
+byte:  0       1   2   3   4    5   6   7   8    9   10   11..end
+       [type]  1E  C4  CA  25   [ — device-bytes — ]  FB  A4/A5  [seq+CRC]
+```
+
+- byte 0: `0xF4` mostly (`0xF0` seen once)
+- bytes 2–4: `C4 CA 25` — protocol header, same across both Cookies
+- bytes 5–8: per-Cookie constant — **safe song = `D5 BE 65 FE`**,
+  **awesome you = `35 28 7D 84`**
+- byte 9: always `0xFB` (constant across both Cookies)
+- byte 10: `0xA4` or `0xA5` (constant across both Cookies)
+- last 2–3 bytes: change every frame → sequence + CRC
+
+#### Per-Cookie identifier bytes (positions 5–8)
+
+| Pattern | safe song | awesome you |
+|---|---|---|
+| X (presence) | `EA DF 32 FF` | `9A 94 3E C2` |
+| α (alt)      | `D5 BE 65 FE` | `35 28 7D 84` |
+
+These four-byte fields are **completely stable within each Cookie's
+frames of the same pattern**, and cleanly different between Cookies.
+But the Cookie's "X bytes" and "α bytes" don't match each other — so
+bytes 5–8 don't carry a literal device-ID number. Either:
+
+- The four bytes are an identifier passed through CC1101 PN9 whitening
+  at a different phase per frame-type, producing different masked
+  values for the same underlying ID, or
+- Pattern α is a sensor-snapshot frame whose middle bytes carry actual
+  sensor data (accel/temperature) — in which case the bytes won't
+  match between patterns even with whitening off.
+
+The flip-test and temperature-ramp experiments queued below will
+distinguish these.
+
+Other observations:
+
+- `0x1E` at byte 1 is constant in both patterns and both Cookies but is
+  not the length byte (decoded frames are ~14 bytes after sync, not 30).
+- rtl_433 reports each frame as 125–129 bits (≈15.6–16.1 bytes including
+  sync). The "longer bursts" we saw earlier were two frames back-to-back.
+- Safe song transmits noticeably faster (~10 s between bursts) than
+  awesome you (~15 s). Probably because the safe-song capture involved
+  more handling — accelerometer-wake bumps the rate. Confirms the
+  spec sheet's "mobile cookies drain battery faster" line.
+
+### Tooling
+
+- `scratch/bucket_bursts.py` — bin rtl_433 detections into time windows
+  defined by a `timeline.txt` file. Used for the shake-test triage.
+- `scratch/cookie_signature.py` — extract per-burst RSSI, SNR, dominant
+  pulse width, frequency offset, file path. Used to find the
+  Cookie-vs-everything-else clusters (see "Two FSK clusters" — same RSSI,
+  same pulse width, same near-zero frequency offset across all Cookie
+  bursts).
+- `scratch/decode_fsk.py` — naive FSK demod (no timing recovery). Useful
+  for first-look at a single capture but loses byte alignment by 1 bit
+  occasionally.
+- `scratch/decode_fsk_v2.py` — preamble-anchored demod with sub-sample
+  zero-crossing detection. Reliably finds `0xD391` in 4/5 captures.
+- `scratch/align_frames.py` — runs v2 across all candidate files and
+  produces the column alignment + per-byte entropy table above.
+- `scratch/analyze_frames.py` — reads rtl_433 `hits.json` output from a
+  capture session, groups frames by byte 0, and reports per-position
+  entropy (constant vs varying). The right tool now that rtl_433 itself
+  is doing the decode; supersedes the homebrew demod scripts above.
+
+### Capture-time gotcha
+
+In a busy 915 MHz environment, rtl_433's auto-gain saturates and Cookie
+bursts get lost in the SNR noise of nearby ISM-band devices. Lock the
+RTL-SDR gain low (`-g 0` for a Cookie touching the antenna) so the
+Cookie's RSSI clearly dominates everything in the room.
+
+## Mother teardown (June 30 2026)
+
+Bench teardown photos in `teardown/mother/`. Enclosure came apart as a
+snap-fit around the bottom seam — no visible screws on this hardware
+revision (the FCC-photographed unit had a rubber base with hidden
+screws; production hardware simplified to plain snap-fit).
+
+### Main PCB silicon
+
+Readable from the teardown close-ups:
+
+| Ref | Marking (partial) | Identification | Purpose |
+|---|---|---|---|
+| main MCU | `PIC32` (large TQFP) | Microchip PIC32-series MIPS MCU | Runs WiFi/Ethernet uplink + cloud logic |
+| `U5` | `Spansion FL064PIF` (SO-16) | Spansion / Cypress **S25FL064P** — 64 Mbit (8 MB) SPI serial flash | Firmware + web assets storage |
+| `U16` | `DAC8100` (QFN) | Audio DAC | Drives the Mother's alert sounds |
+| `Y6` (near MCU) | `8.000 MHz` HC-49 | Crystal | PIC32 main clock |
+| `Y3` (near flash) | `50.000 MHz` SMD | Crystal | Ethernet PHY clock |
+| bulk cap | `1000 µF 10 V RVT` electrolytic | — | Power rail bulk decoupling |
+
+### Wireless daughtercard
+
+Small separate PCB, connects to the main board via a 7-pin ribbon
+cable (visible in `teardown/mother/2026-06-30_170923.jpg`). Carries
+the 915 MHz radio + trace antenna. The chip markings on the current
+photos are at too shallow an angle to read; a straight-on close-up
+is the next info gap. Given the Cookie is CC430F5137, expected
+options are:
+
+- Another **CC430F5137** (SoC, MSP430 + CC1101) — most likely, keeps
+  the firmware toolchain symmetric between endpoints
+- Bare **CC1101** driven by a small MSP430 or PIC — possible but
+  would imply two different codebases; less likely
+
+### Debug / service headers
+
+Visible on the back of the main PCB
+(`teardown/mother/2026-06-30_171033.jpg`):
+
+- `J12` — 8-pin populated header. Layout consistent with a **UART
+  console + PIC32 ICSP** cluster. Highest-value probe target.
+- `J13` — 2-pin JST connector. Guessed to be the Mother's
+  factory-reset button or a spare I/O.
+
+### Sub-boards
+
+- `LBQ-603-D-V1.1` (dated 2013-10-25) — small PCB with dome contacts;
+  the top-side capacitive-touch button + LED "face" of the Mother
+- One or two small **speaker/transducer** boards driving the alert
+  sounds via the DAC8100
+
+### Firmware extraction path
+
+The S25FL064P is a standard SPI serial flash with **no chip-level
+read protection**. It can be dumped in-circuit:
+
+```bash
+# with a CH341A programmer + SOIC-16 test clip clipped onto U5
+flashrom -p ch341a_spi -c S25FL064P -r mother_flash.bin
+```
+
+Prerequisites:
+
+- Mother unplugged (so the PIC32 doesn't fight the programmer on the
+  SPI bus). The clip's 3.3 V line powers the flash chip alone.
+- CH341A programmer confirmed at 3.3 V (some clones ship 5 V by
+  default — check before clipping)
+
+What we expect in the dump:
+
+- PIC32 MIPS application firmware (probably raw, unencrypted — this
+  era + this class of device rarely bothered with flash encryption)
+- Web / dashboard assets that the Mother served locally
+- Cookie pairing state — which 24-bit Cookie IDs it knows, plus any
+  keys/nonces used in the Mother↔Cookie downlink
+- **The downlink frame format** — the Mother has to construct these
+  frames, so the layout is in this firmware. This is the missing
+  piece we couldn't extract passively.
+
+If the dump is encrypted after all, the fallback is to attach a UART
+adapter to `J12` and watch the Mother's serial console during a
+pairing/query attempt.
+
+## Experiments run
+
+- **Stationary 5-min baselines on all three Cookies** (`captures/<name>-long/`).
+  Established the two-pattern (X / α) frame structure and identified
+  bytes 6–8 of pattern X as the **24-bit per-Cookie device ID**
+  (`df 32 ff` / `94 3e c2` / `9b 01 cf` for safe song / awesome you /
+  organic macarons). Byte 5 is shared between awesome you and organic
+  macarons (`0x9a`) but differs for safe song (`0xea`) — likely a
+  hardware-batch or firmware-revision byte.
+- **Flip test on safe song** (`captures/safe-song-flipped/`):
+  **inconclusive on accel.** Bytes 5–10 unchanged across orientations
+  in both patterns X and α. Only the trailing 2 bytes (sequence + CRC)
+  moved, as expected of any frame whose body shifted.
+- **Palm-warmth test on organic macarons** (`captures/organic-macarons-palm/`):
+  **inconclusive on temperature.** Pattern X bytes 0–10 are *byte-for-byte
+  identical* between room baseline and palm-warmed capture. Pattern α
+  bytes 5–8 also unchanged.
+
+### What both null results imply
+
+The Cookie's beacons don't appear to carry live accelerometer or
+temperature data. This fits the sen.se spec sheet's claim that Cookies
+can "stock up to 15 days of data when away from Mother's range" — sensor
+history is buffered locally and uploaded *on request* by Mother's
+downlink, not pushed in presence beacons. A purely passive sniffer
+can identify which Cookie is broadcasting (device ID) but can't read
+its sensor values.
+
+To actually read bed temperature, the receiver has to **transmit**: emit
+the Mother-side query, then decode the Cookie's data-frame reply. That's
+a different hardware class than RTL-SDR + rtl_433 (RX only) — it needs
+a CC1101-class transceiver wired to a host (Pi + CC1101 module, ESP32
++ CC1101, or LilyGO T-Embed CC1101 — all options listed under "Phase 4:
+bridge to Home Assistant" above already support TX).
+
+### Open work to enable read-out
+
+Two independent paths, either of which unblocks the temperature goal:
+
+**A. Live protocol capture (external, non-invasive):**
+
+1. **Sniff a real Mother↔Cookie session** with the Mother powered on
+   next to an RTL-SDR at 915 MHz. Both endpoints will TX during the
+   exchange — the Mother's downlink frames reveal the request format
+   that elicits a sensor response.
+2. **Replay Mother's downlink** with TX hardware (T-Embed CC1101, or
+   Pi + CC1101 module) to elicit a Cookie response we can decode.
+3. **Identify the data-frame format** (different pattern than the X/α
+   beacons; temperature/accel will be unwhitened or simple-XOR inside).
+
+**B. Firmware extraction (internal, non-destructive):**
+
+1. **Dump the Mother's SPI flash** as described in the "Firmware
+   extraction path" section — CH341A + SOIC-16 clip on U5.
+2. **Locate the downlink-frame construction code** in the PIC32
+   firmware — pattern-match by the constants we already know
+   (`0xD391` sync, protocol header bytes `1E E2 65 12` /
+   `C4 CA 25`).
+3. **Read off** the frame format directly, then hand it to path A
+   step 2 (TX replay).
+
+Path B is deterministic; path A depends on capturing an actual
+exchange in the wild. Either feeds the final step below.
+
+**Then, common to both:**
+
+4. **Plumb into HA** as previously planned (rtl_433 → MQTT, or
+   T-Embed CC1101 + ESPHome).
+
+## Open questions
+
+- **What Mother sends downlink.** Until we capture an active
+  Mother↔Cookie exchange, the request format that elicits a sensor
+  response is unknown. Confirming this also confirms whether the
+  Cookie listens for an ack or fires-and-forgets.
+- **Format of the Cookie's data-frame response** (presumably a
+  separate frame type than X/α, with the buffered sensor values).
+- **CRC validation.** Try CRC-16-CCITT (init `0xFFFF`, CC1101 default)
+  over each frame's leading bytes vs the trailing 2 bytes. If that
+  matches, whitening is off; if not, try after applying PN9.
+- **Meaning of `0x1E` at byte 1.** Constant across all captured frames
+  but doesn't equal observed frame length. Probably a protocol-version
+  or flags byte.
+- **Meaning of byte 5.** Shared between awesome you and organic
+  macarons (`0x9a`) but different for safe song (`0xea`). Hardware
+  batch? Firmware revision? Need more Cookies to triangulate.
+- **The rare `d3` / `a7` frame types.** Seen 1–2 times each across
+  long captures. Could be Mother-handshake or status frames.
+- **EU 868 MHz frame layout** — assumed identical (same CC430F5137
+  supports both bands) but not verified.
+
+## References
+
+- FCC Part 15.249 limits: https://www.ecfr.gov/current/title-47/section-15.249
+- URH (Universal Radio Hacker): https://github.com/jopohl/urh
+- rtl_433: https://github.com/merbanan/rtl_433
+- LilyGO T-Embed CC1101 (ESP32-S3 + CC1101 board): https://www.lilygo.cc/products/t-embed-cc1101
+- dbuezas/esphome-cc1101 (ESPHome external_component): https://github.com/dbuezas/esphome-cc1101
+- rtl_433_ESP (ESP32 port of rtl_433 decoders): https://github.com/NorthernMan54/rtl_433_ESP
+- OpenMQTTGateway: https://docs.openmqttgateway.com/
+- ccarlo64/freemother (cloud emulator, no temp support): https://github.com/ccarlo64/freemother
+- Forum thread that pointed at freemother: https://nabaztag.forumactif.fr/t15361
+- TI CC1101 datasheet: https://www.ti.com/product/CC1101

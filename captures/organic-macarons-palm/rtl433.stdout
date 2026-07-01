@@ -1,0 +1,6 @@
+rtl_433 version 25.02 (2025-02-19) inputs file rtl_tcp RTL-SDR with TLS
+
+New defaults active, use "-Y classic -s 250k" if you need the old defaults
+
+Found Rafael Micro R820T tuner
+[R82XX] PLL not locked!

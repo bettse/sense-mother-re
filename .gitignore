@@ -1,0 +1,11 @@
+# Raw IQ capture files — regenerable from a live Cookie + rtl_433,
+# large (~1MB each), and the analytical results (hits.json,
+# rtl433.stdout) are what actually gets reasoned about downstream.
+*.cu8
+
+# macOS metadata
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
