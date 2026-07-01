@@ -881,17 +881,22 @@ Fully assembled ESP32 + CC1101 boards, cheapest first:
 
 | option | price | notes |
 |---|---|---|
-| **Evil Crow RF** | ~$27 on AliExpress / Tindie | Two CC1101 radios + ESP32 on one open-hardware PCB. Overkill radios (we only need one) but the price is right. Bare board (no display). |
-| **M5Stack Basic + M5Stack CC1101 Module** | ~$32 + $11 = **~$43** | Stacked, no wiring. CC1101 module is 855–925 MHz with SMA antenna. Original ESP32, LCD, 3 buttons, USB-C. |
-| **M5Stack CoreS3 + M5Stack CC1101 Module** | ~$50 + $11 = ~$61 | ESP32-S3 + BLE 5 (better BTHome broadcast side than the Basic), touch display, camera. |
-| **LilyGO T-Embed CC1101** | ~$50 | Fully assembled with 1.9" TFT + battery. Well-supported by the `dbuezas/esphome-cc1101` ESPHome external_component. Software path is the smoothest of the four options. |
+| [**Evil Crow RF**](https://github.com/joelsernamoreno/EvilCrow-RF) | ~$27 on AliExpress / Tindie | Two CC1101 radios + ESP32 on one open-hardware PCB. Overkill radios (we only need one) but the price is right. Bare board (no display). |
+| [**M5Stack Basic**](https://shop.m5stack.com/products/esp32-basic-core-iot-development-kit-v2-7) + [**M5Stack CC1101 Module**](https://shop.m5stack.com/products/m5stack-cc1101-module-855-925mhz) | ~$32 + $11 = **~$43** | Stacked, no wiring. CC1101 module is 855–925 MHz with SMA antenna. Original ESP32, LCD, 3 buttons, USB-C. |
+| [**M5Stack CoreS3**](https://shop.m5stack.com/products/m5stack-cores3-esp32s3-lotdevelopment-kit) + [**M5Stack CC1101 Module**](https://shop.m5stack.com/products/m5stack-cc1101-module-855-925mhz) | ~$50 + $11 = ~$61 | ESP32-S3 + BLE 5 (better BTHome broadcast side than the Basic), touch display, camera. |
+| [**LilyGO T-Embed CC1101**](https://www.lilygo.cc/products/t-embed-cc1101) | ~$50 | Fully assembled with 1.9" TFT + battery. Well-supported by the [`dbuezas/esphome-cc1101`](https://github.com/dbuezas/esphome-cc1101) ESPHome external_component. Software path is the smoothest of the four options. |
 
-Other assembled boards on Tindie (CaracalDB, FlipMods Ultra V3,
-Orange Dragon Mayhem, Rabbit-Labs CC1101 expansion) are marketed as
-Flipper Zero add-ons but the ESP32 + CC1101 combination is USB-accessible.
-They typically bundle extras we don't need (NRF24L01, SD card, case for
-Flipper) and price out at $50–80. The T-Embed and M5Stack Basic are the
-cleanest purpose-fit options.
+Other assembled boards on Tindie are marketed as Flipper Zero
+add-ons but their ESP32 + CC1101 combination is USB-accessible. They
+typically bundle extras we don't need (NRF24L01, SD card, case for
+Flipper) and price out at $50–80:
+
+- [CaracalDB ESP32 + NRF24 + CC1101 for Flipper Zero](https://www.tindie.com/products/caracaldb/esp32-nrf24l01-and-cc1101-board-for-flipper-zero/)
+- [FlipMods Ultra V3 ESP32/NRF24/CC1101 3-in-1](https://www.tindie.com/products/flipmods/ultra-v3-esp32nrf24cc1101-3in1-for-flipper-zero/)
+- [Orange Dragon Mayhem v2 (ESP32-CAM + CC1101 + NRF24)](https://www.tindie.com/products/orangedragon/cc1101nrf24l01esp32-cam-board-for-flipper-zero/)
+- [Rabbit-Labs CC1101 Expansion Board](https://www.tindie.com/products/tehrabbitt/flipper-zero-cc1101-expansion-board-rabbit-labstm/)
+
+The T-Embed and M5Stack Basic are the cleanest purpose-fit options.
 
 **nRF52 + CC1101**: no ready-made board exists. nRF52 has cleaner
 native BLE than ESP32 (lower-power, better BTHome-broadcast fit), but
