@@ -861,12 +861,17 @@ the *same* Cookie's sessions where safe song was live. Same story for
   Sen.se may have added it for their own heartbeat.
 - **EU 868 MHz frame layout** — assumed identical (same CC430F5137
   and same SimpliciTI stack, just moved to 868 MHz) but not verified.
-- **Flipper Zero support for SimpliciTI.** Its sub-GHz radio is a
-  CC1101, so raw capture at 915 MHz should be feasible. Investigate
-  whether the Flipper can identify SimpliciTI framing (sync `0xD391`,
-  100 kbps GFSK, PN9 whitening) without needing decryption — even a
-  "detect Cookies nearby by SRCADDR" mode would be useful without
-  dragging out an SDR.
+- **Flipper Zero.** Flipper has a CC1101 so the hardware supports
+  everything sen.se does. Stock firmware and community firmwares
+  (Momentum/Xtreme/Unleashed) do NOT decode SimpliciTI framing —
+  they'd need a custom `.fap` app that configures the CC1101 for
+  sen.se's PHY (100 kbps GFSK, sync `0xD391`, PN9 whitening) and
+  implements the Join/reply state machine. Realistically that's a
+  few-weekends project. Meanwhile the Flipper is useful for:
+  passive RSSI hunting on 915 MHz to plan receiver placement,
+  detecting Mother TX activity when it's powered on, and saving
+  raw `.sub` captures for archival. Not a substitute for the
+  T-Embed CC1101 in the AP role.
 - **rtl_433 native SimpliciTI decoder.** Right now we invoke rtl_433
   with a raw `-X` flex-decoder to get bytes, then de-whiten and parse
   in Python (`scratch/cc1101_dewhiten.py` + `scratch/parse_frames.py`).
