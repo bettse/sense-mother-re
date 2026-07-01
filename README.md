@@ -75,7 +75,8 @@ sense-mother-re/
 ├── teardown/                      bench teardown photos
 │   └── mother/                    Mother PCBs after disassembly (2026-06-30)
 ├── captures/                      RF captures, one dir per session
-└── scratch/                       analysis scripts
+├── scratch/                       analysis scripts
+└── simpliciti/                    vendored TI SimpliciTI source + SmartRF Sniffer
 ```
 
 ## What the FCC photos actually show
@@ -618,13 +619,16 @@ write an AP that speaks the same stack.
 
 #### Mother boots happily with no cloud
 
-- Got DHCP address 192.168.2.165 in ~9.7 s after power-up.
-- SimpliciTI init happens right after TCP/IP is up, and re-init
-  ("Reset RF...") starts a few seconds later — the Mother is
-  perfectly willing to run indefinitely trying to relink to Cookies
-  even without the sen.se cloud reachable. It just loops the
-  `"nonetwork"` LED animation because the cloud-uplink health check
-  fails.
+- Comes up cleanly in ~9.7 s to `Starting main loop...` even with
+  **Ethernet unplugged**. The `New IP Address: 192.168.2.165` line
+  is NOT a DHCP-obtained address — no link, no DHCP. Either NVRAM
+  cached from a prior deployment, or a firmware fallback value.
+  Either way, SimpliciTI initialises independently of the WAN side.
+- SimpliciTI init happens right after the TCP/IP stack comes up,
+  and re-init ("Reset RF...") starts a few seconds later — the
+  Mother runs indefinitely trying to relink to Cookies even with
+  no cloud reachable. It just loops the `"nonetwork"` LED animation
+  because the cloud-uplink health check fails.
 - Useful for future testing: leave the Mother powered next to an
   SDR and it'll keep re-initing SimpliciTI and re-issuing whatever
   handshake frames it sends to Cookies — a free source of live
