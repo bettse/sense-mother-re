@@ -394,76 +394,10 @@ Each decoded frame lands in `hits.json` as a "cookie" model, e.g.:
 {"model":"cookie","data":"d391f41ee265129a943ec27dd259764e", ...}
 ```
 
-### Frame structure (after 5-min captures of both Cookies)
+### Frame structure
 
-Long stationary captures of both Cookies through the rtl_433 decoder
-yielded 20 frames (awesome you) and 31 frames (safe song). Grouping by
-byte 0 and then by the magic at bytes 2–4 reveals **two dominant
-patterns shared by both Cookies**:
-
-#### Pattern X — "presence" (≈75% of frames)
-
-```
-byte:  0       1   2   3   4    5   6   7   8    9   10   11..end
-       [type]  1E  E2  65  12   [ — device-bytes — ]  ?  D2  [seq+CRC]
-```
-
-- byte 0: frame type, observed `0xF4` and `0xEC` (and rarely `0xE8` etc)
-- bytes 1–4: `1E E2 65 12` — protocol header, same across both Cookies
-- bytes 5–8: per-Cookie constant — **safe song = `EA DF 32 FF`**,
-  **awesome you = `9A 94 3E C2`**
-- byte 9: mostly `0x7D` for awesome you, mix of `7D / 79 / FF` for safe
-  song
-- byte 10: mostly `0xD2`
-- last 2–3 bytes: change every frame → likely sequence counter + CRC
-
-#### Pattern α — "alt" (≈15% of frames)
-
-```
-byte:  0       1   2   3   4    5   6   7   8    9   10   11..end
-       [type]  1E  C4  CA  25   [ — device-bytes — ]  FB  A4/A5  [seq+CRC]
-```
-
-- byte 0: `0xF4` mostly (`0xF0` seen once)
-- bytes 2–4: `C4 CA 25` — protocol header, same across both Cookies
-- bytes 5–8: per-Cookie constant — **safe song = `D5 BE 65 FE`**,
-  **awesome you = `35 28 7D 84`**
-- byte 9: always `0xFB` (constant across both Cookies)
-- byte 10: `0xA4` or `0xA5` (constant across both Cookies)
-- last 2–3 bytes: change every frame → sequence + CRC
-
-#### Per-Cookie identifier bytes (positions 5–8)
-
-| Pattern | safe song | awesome you |
-|---|---|---|
-| X (presence) | `EA DF 32 FF` | `9A 94 3E C2` |
-| α (alt)      | `D5 BE 65 FE` | `35 28 7D 84` |
-
-These four-byte fields are **completely stable within each Cookie's
-frames of the same pattern**, and cleanly different between Cookies.
-But the Cookie's "X bytes" and "α bytes" don't match each other — so
-bytes 5–8 don't carry a literal device-ID number. Either:
-
-- The four bytes are an identifier passed through CC1101 PN9 whitening
-  at a different phase per frame-type, producing different masked
-  values for the same underlying ID, or
-- Pattern α is a sensor-snapshot frame whose middle bytes carry actual
-  sensor data (accel/temperature) — in which case the bytes won't
-  match between patterns even with whitening off.
-
-The flip-test and temperature-ramp experiments queued below will
-distinguish these.
-
-Other observations:
-
-- `0x1E` at byte 1 is constant in both patterns and both Cookies but is
-  not the length byte (decoded frames are ~14 bytes after sync, not 30).
-- rtl_433 reports each frame as 125–129 bits (≈15.6–16.1 bytes including
-  sync). The "longer bursts" we saw earlier were two frames back-to-back.
-- Safe song transmits noticeably faster (~10 s between bursts) than
-  awesome you (~15 s). Probably because the safe-song capture involved
-  more handling — accelerometer-wake bumps the rate. Confirms the
-  spec sheet's "mobile cookies drain battery faster" line.
+See the "CC1101 PN9 data-whitening" and "Frame mapping against
+SimpliciTI spec" sections further down for the correct decode.
 
 ### Tooling
 
@@ -677,38 +611,34 @@ pairing/query attempt.
 
 ## Experiments run
 
-- **Stationary 5-min baselines on all three Cookies** (`captures/<name>-long/`).
-  Established the two-pattern (X / α) frame structure and identified
-  bytes 6–8 of pattern X as the **24-bit per-Cookie device ID**
-  (`df 32 ff` / `94 3e c2` / `9b 01 cf` for safe song / awesome you /
-  organic macarons). Byte 5 is shared between awesome you and organic
-  macarons (`0x9a`) but differs for safe song (`0xea`) — likely a
-  hardware-batch or firmware-revision byte.
+- **Stationary 5-min baselines on all three Cookies**
+  (`captures/<name>-long/`). Post-dewhitening these locked in each
+  Cookie's 4-byte SimpliciTI SRCADDR (`6f ec 16 15` safe song,
+  `1f a7 1a 28` awesome you, `1f a8 25 25` organic macarons) and
+  showed all traffic is unencrypted port-7 (PLL) beacons + periodic
+  port-3 (Join) broadcasts.
 - **Flip test on safe song** (`captures/safe-song-flipped/`):
-  **inconclusive on accel.** Bytes 5–10 unchanged across orientations
-  in both patterns X and α. Only the trailing 2 bytes (sequence + CRC)
-  moved, as expected of any frame whose body shifted.
-- **Palm-warmth test on organic macarons** (`captures/organic-macarons-palm/`):
-  **inconclusive on temperature.** Pattern X bytes 0–10 are *byte-for-byte
-  identical* between room baseline and palm-warmed capture. Pattern α
-  bytes 5–8 also unchanged.
+  **null result on accelerometer** — PLL frames carry only a 3-byte
+  payload that shows no orientation-linked byte changes.
+- **Palm-warmth test on organic macarons**
+  (`captures/organic-macarons-palm/`): **null result on temperature**
+  — same PLL 3-byte payload showed no monotonic byte tracking
+  temperature between room and palm captures.
 
 ### What both null results imply
 
-The Cookie's beacons don't appear to carry live accelerometer or
-temperature data. This fits the sen.se spec sheet's claim that Cookies
-can "stock up to 15 days of data when away from Mother's range" — sensor
-history is buffered locally and uploaded *on request* by Mother's
-downlink, not pushed in presence beacons. A purely passive sniffer
-can identify which Cookie is broadcasting (device ID) but can't read
-its sensor values.
+The Cookies' PLL beacons carry only a 3-byte payload — not enough
+room for temperature or 3-axis accel data. Sensor telemetry must
+either (a) live in a message type sen.se's Cookies only send *after*
+being linked to a Mother (which ours are not), or (b) be gated behind
+an explicit Mother poll. Either way, a passive-only receiver + our
+current unlinked Cookies won't yield sensor readings.
 
-To actually read bed temperature, the receiver has to **transmit**: emit
-the Mother-side query, then decode the Cookie's data-frame reply. That's
-a different hardware class than RTL-SDR + rtl_433 (RX only) — it needs
+To actually read bed temperature, we need to **transmit** and act
+as the Cookie's Access Point — Mother side of the handshake. That's
 a CC1101-class transceiver wired to a host (Pi + CC1101 module, ESP32
-+ CC1101, or LilyGO T-Embed CC1101 — all options listed under "Phase 4:
-bridge to Home Assistant" above already support TX).
++ CC1101, or LilyGO T-Embed CC1101 — see the earlier "Phase 4:
+bridge to Home Assistant" section for hardware options).
 
 ### Open work to enable read-out
 
@@ -744,9 +674,9 @@ log), the shortest path becomes:
 
 **C. Firmware dump as a fallback / verification** (see
 "Firmware extraction path" below): dump the SPI flash if steps
-A or B stall on any ambiguity; pattern-match by the constants
-we know (`0xD391`, `1E E2 65 12`, `C4 CA 25`) to find the
-downlink-frame construction code.
+A or B stall on any ambiguity; pattern-match by the Join Token
+`08 07 06 05` or sync word `0xD391` to find the downlink-frame
+construction code.
 
 **Then, common to all three:**
 
@@ -900,32 +830,24 @@ the *same* Cookie's sessions where safe song was live. Same story for
 
 ## Open questions
 
-- **Confirm the LENGTH / MISC byte location.** The first byte `0xf4`
-  we're currently reading as the start of DSTADDR may actually be a
-  radio-inserted MISC or LENGTH byte with DSTADDR starting at position
-  1. Cross-check by decoding a Mother-side frame (once we sniff one) —
-  its DSTADDR should be a Cookie's address, which will disambiguate.
-- **Whether sen.se used the default SimpliciTI network key.** If yes,
-  passive decryption from `simpliciti/` samples is possible. If not,
-  key extraction needs the SPI-flash dump.
 - **Cookie SimpliciTI address byte order** (little-endian vs
-  big-endian). SimpliciTI spec 4.8 states multi-byte numbers are
-  little-endian, so the printed byte order and the numeric device ID
-  may need reversal for cross-reference.
-- **Confirm bytes-5–7-per-Cookie shared factory batch** by scanning
-  the third-party Cookie market for more devices.
-- **The rare `d3` / `a7` frame types.** May be SimpliciTI Link (port
-  0x02) or Join (port 0x03) frames sent when a Cookie is trying to
-  (re-)associate.
+  big-endian). Spec Section 4.8 says multi-byte numbers are
+  little-endian, so `1f a8 25 25` observed on the air might be the
+  numeric address `0x2525a81f`. Only matters if we ever want to
+  cross-reference against a numeric ID printed on the Cookie.
+- **The PLL (port-7) 3-byte payload semantics.** Two of the three
+  bytes look like a slowly-varying counter; the third might be a
+  parity/status byte. Not documented in the SimpliciTI Spec — it's
+  a NWK-reserved port that TI didn't publish a payload table for.
+  Sen.se may have added it for their own heartbeat.
 - **EU 868 MHz frame layout** — assumed identical (same CC430F5137
   and same SimpliciTI stack, just moved to 868 MHz) but not verified.
-- **Flipper Zero support for SimpliciTI.** The Flipper's sub-GHz radio
-  is a CC1101, so raw capture at 915 MHz should be feasible. Investigate:
-  - Whether the Flipper can decode / recognize SimpliciTI framing
-    (matching `0xD391` sync, 100 kbps GFSK) even without decrypting
-  - Whether an existing community app can dissect SimpliciTI packets
-  - Even a "detect Cookies nearby by SRCADDR" identifier-only mode
-    would be useful for coverage checks without dragging out an SDR.
+- **Flipper Zero support for SimpliciTI.** Its sub-GHz radio is a
+  CC1101, so raw capture at 915 MHz should be feasible. Investigate
+  whether the Flipper can identify SimpliciTI framing (sync `0xD391`,
+  100 kbps GFSK, PN9 whitening) without needing decryption — even a
+  "detect Cookies nearby by SRCADDR" mode would be useful without
+  dragging out an SDR.
 
 ## References
 
