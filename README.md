@@ -867,11 +867,45 @@ the *same* Cookie's sessions where safe song was live. Same story for
   they'd need a custom `.fap` app that configures the CC1101 for
   sen.se's PHY (100 kbps GFSK, sync `0xD391`, PN9 whitening) and
   implements the Join/reply state machine. Realistically that's a
-  few-weekends project. Meanwhile the Flipper is useful for:
-  passive RSSI hunting on 915 MHz to plan receiver placement,
-  detecting Mother TX activity when it's powered on, and saving
-  raw `.sub` captures for archival. Not a substitute for the
-  T-Embed CC1101 in the AP role.
+  few-weekends project. The stock CLI's `subghz` commands
+  (`tx_carrier`, `rx`, `tx`, `chat`, `decode_raw`) are all locked
+  to preset protocols — no raw-byte injection at custom modulation.
+  So the Flipper is useful for: passive RSSI hunting on 915 MHz to
+  plan receiver placement, detecting Mother TX activity when it's
+  powered on, and saving raw `.sub` captures for archival — but not
+  a stand-in for the AP role.
+
+## Cheaper CC1101 hardware options than the T-Embed
+
+The LilyGO T-Embed CC1101 (~$50) has been the default recommendation
+here, but its display + battery + case are nice-to-haves not required
+for a headless "SimpliciTI-to-BLE thermometer" bridge. Cheaper paths
+that end up in the same place:
+
+| option | price | pre-assembled? |
+|---|---|---|
+| **ESP32-C3 SuperMini + EByte E07-M1101D CC1101 module** | ~$5–8 total | needs 8 wire connections between the boards |
+| **Elecrow ESP-GRABER PCB** | $15 (bare PCB) | requires assembly + supplied components |
+| **Evil Crow RF** | ~$27 (assembled) | two CC1101s + ESP32 on one open-hardware PCB |
+| **LilyGO T-Embed CC1101** | ~$50 | fully assembled with 1.9" TFT + battery |
+
+**BTHome-over-BLE bridge pattern.** ESP32 has native BLE and Home
+Assistant natively discovers [BTHome](https://bthome.io) sensors
+without any Wi-Fi credentials, MQTT broker, or ESPHome integration.
+The firmware just does:
+
+```
+CC1101 RX  →  Cookie SimpliciTI Join reply + PLL rx  →  parse
+temp/accel  →  BTHome BLE advertisement  →  HA auto-discovery
+```
+
+A ready-made bedside puck = 1 ESP32-C3 + 1 CC1101 + battery + small
+case. No Wi-Fi config, no display, no serial cable. HA sees a new
+BLE thermometer show up. Libraries that reduce firmware effort:
+- `BTHomeV2` (Arduino/ESPHome library for BLE broadcast side)
+- `SmartRC-CC1101-Driver-Lib` (CC1101 SPI driver for ESP32)
+- Our vendored `simpliciti-1.2.0-mspgcc/Components/simpliciti/`
+  (SimpliciTI network layer to port)
 - **rtl_433 native SimpliciTI decoder.** Right now we invoke rtl_433
   with a raw `-X` flex-decoder to get bytes, then de-whiten and parse
   in Python (`scratch/cc1101_dewhiten.py` + `scratch/parse_frames.py`).
