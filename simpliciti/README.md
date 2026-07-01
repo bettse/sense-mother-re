@@ -14,40 +14,41 @@ we cross-check against.
 
 ## Contents
 
-- **`simpliciti-1.2.0-mspgcc/`** — SimpliciTI 1.2.0 sources. This is
-  the *primary* reference. Original TI release (`swrc132`, Nov 2011)
-  wrapped with an mspgcc build harness. TI's `Components/`,
-  `Applications/`, `Projects/`, `Documents/` trees are intact and
-  unmodified. Contains the CC1101 MRFI radio driver
-  (`Components/mrfi/radios/family1/mrfi_radio.c`), the full network
-  layer (`Components/nwk/*`), and 9 TI PDFs including the
-  SimpliciTI Developers Notes and Specification.
+### Original TI archives (authoritative provenance)
 
+Downloaded directly from TI. These are Windows self-extracting
+installers wrapped in a normal zip; they need Windows / Wine to
+extract, so for on-disk browsing we also keep the GitHub-mirror
+extractions below.
+
+- **`swrc099e-SimpliciTI-IAR-1.2.0-original.zip`** (12 M) — TI's
+  final 1.2.0 release (SWRC099, Nov 2011)
+- **`swrc132a-SimpliciTI-CCS-1.1.1-original.zip`** (9.7 M) — TI's
+  1.1.1 release (SWRC132, Dec 2009)
+- **`smartrf-sniffer-2.18.1.zip`** (22 M) — SmartRF Packet Sniffer
+  (SWRC045, Jun 2014) — Windows GUI tool that dissects SimpliciTI
+  natively with a CC1111 dongle or CC1101EM eval board
+- **`SmartRF_Packet_Sniffer_2.18.1_Readme.txt`** — sniffer release
+  notes for quick scanning
+
+### Extracted source trees (readable on-disk)
+
+Third-party GitHub mirrors of the same TI 1.1.1 and 1.2.0 releases
+above, unpacked. Use these to `grep` / `less` the actual C source.
+
+- **`simpliciti-1.2.0-mspgcc/`** — SimpliciTI 1.2.0 (primary reference).
   Mirror: <https://github.com/kubaraczkowski/SimpliciTI-mspgcc-1.2.0>
-
-- **`simpliciti-1.1.1-ccs/`** — SimpliciTI 1.1.1 sources (`swrc099`,
-  Dec 2009). Secondary reference kept for baseline comparison — the
-  sen.se firmware could conceivably be built against 1.1.1 or 1.2.0.
-  Smaller radio-family coverage than 1.2.0 but still includes CC1101
-  (`family1`) and the full SimpliciTI network layer + docs.
-
+  TI's `Components/`, `Applications/`, `Projects/`, `Documents/` trees
+  intact and unmodified. Notable files for our target:
+  - `Components/mrfi/radios/family1/mrfi_radio.c` — CC1101 MRFI driver
+  - `Components/nwk/nwk_*.[ch]` — network-layer packet format
+  - `Documents/SimpliciTI Specification.pdf` — the frame-format bible
+  - `Documents/Application Note on SimpliciTI Security.pdf` —
+    encryption algorithm + default key
+- **`simpliciti-1.1.1-ccs/`** — SimpliciTI 1.1.1 (secondary reference,
+  in case sen.se firmware was built pre-1.2.0).
   Mirror: <https://github.com/juansmp/SimpliciTI-CCS-1.1.1>
 
-- **`smartrf-sniffer-2.18.1.zip`** — TI SmartRF Packet Sniffer 2.18.1
-  (Jun 2014, `swrc045z`). Windows-only GUI tool that captures 915 MHz
-  traffic via a CC1111 USB Dongle (or CC1101EM + SmartRF eval board)
-  and produces field-dissected packet views in Wireshark format.
-  **Supports SimpliciTI versions 1.0.0 / 1.0.4 / 1.0.6 / 1.1.0 /
-  1.1.1 / 1.2.0.** Zip contains both `Setup_SmartRF_Packet_Sniffer_
-  2.18.0.exe` and the 2.18.1 setup EXE.
-
-  Original download: <https://www.ti.com/tool/PACKET-SNIFFER>
-  (still un-authenticated as of June 2026;
-  `https://dr-download.ti.com/software-development/support-software/MD-WL2rMfHrNh/01.00.00.0Z/swrc045z.zip`).
-  Vendored anyway to survive future URL changes.
-
-- **`SmartRF_Packet_Sniffer_2.18.1_Readme.txt`** — extracted release
-  notes, quick-scan version history.
 
 ## Licensing
 

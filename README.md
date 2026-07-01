@@ -754,27 +754,88 @@ downlink-frame construction code.
    this (no TX), so use T-Embed CC1101 + ESPHome, or Pi + CC1101
    with a small SimpliciTI driver.
 
+## Frame mapping against SimpliciTI spec
+
+Reading `simpliciti/simpliciti-1.2.0-mspgcc/Documents/SimpliciTI
+Specification.pdf` (Section 5, Figures 7–8, Tables 1–3) and lining up
+against our decoded Cookie frames:
+
+The general SimpliciTI-over-CC1101 frame (without security) is:
+
+```
+PREAMBLE | SYNC | LENGTH | MISC | DSTADDR(4) | SRCADDR(4) | PORT | DEVICE INFO | TRACTID | App Payload | FCS
+```
+
+With security enabled (Figure 8) an extra `CTR(1)` + `MAC(2)` block
+sits between `TRACTID` and `App Payload`.
+
+Applied to the organic-macarons pattern-X frame
+`f4 1e e2 65 12 9a 9b 01 cf 7d d2 [seq+CRC]` (post-sync, 14 bytes):
+
+| pos  | field         | value          | interpretation                                                                                     |
+|------|---------------|----------------|----------------------------------------------------------------------------------------------------|
+| 0–3  | **DSTADDR**   | `f4 1e e2 65`  | The **Mother's 4-byte SimpliciTI address** — identical across all three Cookies ✓                  |
+| 4–7  | **SRCADDR**   | `12 9a 9b 01`  | **Cookie's 4-byte address.** Byte 0 = `0x12` = shared Cookie-family prefix; bytes 1–3 = per-device |
+| 8    | **PORT**      | `0xcf`         | bit 7=1 forwarded, **bit 6=1 encryption ON**, port `0x0F`                                          |
+| 9    | **DEVICE INFO** | `0x7d`       | ack-req + sleeps/polls + End Device + ack-reply + hop count 5 (Table 3 bit-field)                  |
+| 10   | **TRACTID**   | `0xd2`         | transaction id                                                                                     |
+| 11–13 | **Security envelope + payload** | 3 bytes | CTR(1) + MAC(2) per Figure 8; app payload is empty or lives inside the encrypted region |
+|  —   | FCS           | (stripped by CC1101 HW / rtl_433) | 16-bit CRC                                                            |
+
+Cross-Cookie 4-byte addresses under this alignment:
+
+| Cookie          | SimpliciTI SRCADDR  |
+|-----------------|---------------------|
+| safe song       | `12 ea df 32`       |
+| awesome you     | `12 9a 94 3e`       |
+| organic macarons | `12 9a 9b 01`       |
+
+All share `0x12` (Cookie-family byte); awesome you and organic macarons
+additionally share `9a` (probably same factory batch).
+
+**Payloads are encrypted.** The PORT byte's bit-6 is set on every Cookie
+frame — that's SimpliciTI's "encryption context enabled" flag. The
+`CTR(1)+MAC(2)` block per Figure 8 sits between `TRACTID` and any app
+payload. This explains why the flip and palm-warm experiments moved no
+bytes: temperature/accel are either (a) inside the encrypted region and
+we can't read them without the network key, or (b) not sent in beacons
+at all and only fetched by Mother's on-demand poll.
+
+Getting the network key means either:
+- **Reading `Application Note on SimpliciTI Security.pdf`** to see if
+  sen.se used the default key that ships in TI's samples (very
+  possible — 2013 IoT startup + "simple deployment" ethos)
+- **Dumping the Mother's SPI flash** (the FL064PIF path already
+  planned) and grep-ing for the key in the PIC32 firmware
+
 ## Open questions
 
-- **Map our observed frames to SimpliciTI header fields.** Now that
-  we know the stack, the byte-by-byte interpretation should fall out
-  of the SimpliciTI network-layer header definition. Specifically:
-  which byte is `port`, which is the peer-link ID, where the ACK
-  request bit lives, and how the address is encoded.
-- **Which SimpliciTI message type** the Cookie sends periodically
-  (probably a `Link_Send` on a fixed port) and how Mother polls it
-  (`Poll` on the same or a different port).
-- **CRC / whitening** — SimpliciTI defaults for CC1101 include the
-  chip's hardware CRC-16 and no whitening, but sen.se may have
-  changed the defaults. Cross-check the trailing 2 bytes against
-  CRC-16-CCITT init `0xFFFF`.
-- **Meaning of byte 5** (safe song `0xea`, awesome you + organic
-  macarons `0x9a`). Probably resolvable once we're reading the
-  SimpliciTI header instead of a byte stream.
-- **The rare `d3` / `a7` frame types.** May be SimpliciTI link/join
-  frames sent when a Cookie is trying to (re-)associate.
+- **Confirm the LENGTH / MISC byte location.** The first byte `0xf4`
+  we're currently reading as the start of DSTADDR may actually be a
+  radio-inserted MISC or LENGTH byte with DSTADDR starting at position
+  1. Cross-check by decoding a Mother-side frame (once we sniff one) —
+  its DSTADDR should be a Cookie's address, which will disambiguate.
+- **Whether sen.se used the default SimpliciTI network key.** If yes,
+  passive decryption from `simpliciti/` samples is possible. If not,
+  key extraction needs the SPI-flash dump.
+- **Cookie SimpliciTI address byte order** (little-endian vs
+  big-endian). SimpliciTI spec 4.8 states multi-byte numbers are
+  little-endian, so the printed byte order and the numeric device ID
+  may need reversal for cross-reference.
+- **Confirm bytes-5–7-per-Cookie shared factory batch** by scanning
+  the third-party Cookie market for more devices.
+- **The rare `d3` / `a7` frame types.** May be SimpliciTI Link (port
+  0x02) or Join (port 0x03) frames sent when a Cookie is trying to
+  (re-)associate.
 - **EU 868 MHz frame layout** — assumed identical (same CC430F5137
-  and same SimpliciTI stack, just moved to 868) but not verified.
+  and same SimpliciTI stack, just moved to 868 MHz) but not verified.
+- **Flipper Zero support for SimpliciTI.** The Flipper's sub-GHz radio
+  is a CC1101, so raw capture at 915 MHz should be feasible. Investigate:
+  - Whether the Flipper can decode / recognize SimpliciTI framing
+    (matching `0xD391` sync, 100 kbps GFSK) even without decrypting
+  - Whether an existing community app can dissect SimpliciTI packets
+  - Even a "detect Cookies nearby by SRCADDR" identifier-only mode
+    would be useful for coverage checks without dragging out an SDR.
 
 ## References
 
