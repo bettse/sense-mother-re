@@ -528,13 +528,28 @@ options are:
 
 ### Debug / service headers
 
-Visible on the back of the main PCB
-(`teardown/mother/2026-06-30_171033.jpg`):
+- `J10` — 4-hole through-hole footprint on the **left edge of the
+  main PCB, near the 8.000 MHz crystal** (front side, see
+  `teardown/mother/2026-06-30_170947.jpg`). 4-pin geometry is the
+  usual `VCC / TX / RX / GND` UART footprint. **Best guess for the
+  Mother's debug UART console.** Highest-value probe target.
+- `J12` — 6-hole footprint on the **back of the main PCB, adjacent
+  to the Ethernet daughtercard mating pins**. Almost certainly the
+  Ethernet mezzanine interface, not a service header.
+- `J13` — 2-pin populated JST on the back of the main PCB. Guessed
+  to be a factory-reset button or spare I/O.
 
-- `J12` — 8-pin populated header. Layout consistent with a **UART
-  console + PIC32 ICSP** cluster. Highest-value probe target.
-- `J13` — 2-pin JST connector. Guessed to be the Mother's
-  factory-reset button or a spare I/O.
+Confirming J10's UART pinout before wiring a serial adapter:
+
+1. Power off. Continuity-check each J10 pin to any obvious ground
+   (large plane, bulk-cap ground pin). The one that beeps is `GND`.
+2. Power on. DC-measure the other three pins. `VCC` sits at 3.3 V.
+   The remaining two are `TX` / `RX`.
+3. `TX` shows visible voltage dips on a multimeter during boot (the
+   Mother is transmitting characters). `RX` idles at 3.3 V.
+4. Adapter-RX to Mother-TX, adapter-GND to Mother-GND, `screen
+   /dev/tty.usbserial-XYZ 115200` (or 57600 / 9600), reset the
+   Mother, and boot output should appear.
 
 ### Sub-boards
 
