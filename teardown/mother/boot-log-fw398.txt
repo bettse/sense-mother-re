@@ -1,0 +1,38 @@
+Mother boot log captured via UART on J10 (VCC / GND / RX / TX, square pad = VCC).
+Baud: 115200 8N1.  Firmware version 398.
+
+#-0- System starting
+#-0- Firmware Version: 398
+#-0- Init SENSE Hardware
+#-0- Init I2C
+#-0- Init LED Driver
+#-0- Init MEM
+#-0- Memory JedecID: 10216
+#-0- Init DAC Audio
+#-0- Init Touch sensor
+#-2006- Run Animation "start"
+#-9774- Run Animation "nonetwork"
+#-9778- #Starting TCP/IP...
+#-9670- #Starting SimpliciTI...
+#-9673- #Starting main loop...
+#-9676- #New IP Address: 192.168.2.165
+#-10698- Run Animation "nonetwork"
+#-11731- Run Animation "nonetwork"
+#-12763- Run Animation "nonetwork"
+#-13795- Run Animation "nonetwork"
+#-14183- #Reset RF...
+#-14185- #Starting SimpliciTI...
+#-14831- Run Animation "nonetwork"
+#-15864- Run Animation "nonetwork"
+#-16897- Run Animation "nonetwork"
+#-17930- Run Animation "nonetwork"
+#-18962- Run Animation "nonetwork"
+#-19995- Run Animation "nonetwork"
+#-21028- Run Animation "nonetwork"
+#-22060- Run Animation "nonetwork"
+#-23093- Run Animation "nonetwork"
+#-24126- Run Animation "nonetwork"
+#-25158- Run Animation "nonetwork"
+#-26191- Run Animation "nonetwork"
+#-27223- Run Animation "nonetwork"
+#-28256- Run Animation "nonetwork"

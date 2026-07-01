@@ -558,6 +558,87 @@ Confirming J10's UART pinout before wiring a serial adapter:
 - One or two small **speaker/transducer** boards driving the alert
   sounds via the DAC8100
 
+### UART console output (fw v398)
+
+J10 confirmed as `VCC (square pad) / GND / RX / TX` at 115200 8N1.
+Full boot log in `teardown/mother/boot-log-fw398.txt`. Highlights:
+
+```
+#-0- System starting
+#-0- Firmware Version: 398
+#-0- Init SENSE Hardware
+#-0- Init I2C
+#-0- Init LED Driver
+#-0- Init MEM
+#-0- Memory JedecID: 10216
+#-0- Init DAC Audio
+#-0- Init Touch sensor
+#-2006- Run Animation "start"
+#-9774- Run Animation "nonetwork"
+#-9778- #Starting TCP/IP...
+#-9670- #Starting SimpliciTI...
+#-9673- #Starting main loop...
+#-9676- #New IP Address: 192.168.2.165
+#-14183- #Reset RF...
+#-14185- #Starting SimpliciTI...
+```
+
+Two conclusions worth their own subsections:
+
+#### The RF protocol is **TI SimpliciTI**
+
+The `Starting SimpliciTI...` and `Reset RF...` lines are decisive.
+**SimpliciTI is Texas Instruments' proprietary low-power sub-GHz
+network protocol** — designed for CC1101 / CC2500 radios, targeted
+at exactly this class of star-topology sensor network (one Access
+Point + up to N End Devices). Released with reference source and
+app-note documentation (TI documents `SLAA344`, `SLA485`) around
+2008–2013 before TI deprecated it in favor of newer stacks. Public
+source and docs are still available.
+
+Big implications:
+
+- **The frame layout we RE'd byte-by-byte is a documented
+  SimpliciTI packet**, not sen.se's invention. Bytes 0–4 are almost
+  certainly SimpliciTI's network header (packet type + length +
+  peer link ID); bytes 5–10 include the SimpliciTI Peer Link
+  address + sequence number.
+- The Cookie is a SimpliciTI End Device; the Mother is the Access
+  Point.
+- **Building our own AP** using TI's reference implementation on a
+  Pi + CC1101 (or a MSP430 devboard) would let us **join the
+  network as if we were a Mother** and use SimpliciTI's native
+  request/response API to poll Cookies for stored data — the
+  shortest path to bed-temperature-in-HA.
+
+This obsoletes most of the "reverse engineer the Mother's downlink
+by dumping its firmware" work — with SimpliciTI as the substrate,
+the protocol is documented, the source is public, and we can just
+write an AP that speaks the same stack.
+
+#### Mother boots happily with no cloud
+
+- Got DHCP address 192.168.2.165 in ~9.7 s after power-up.
+- SimpliciTI init happens right after TCP/IP is up, and re-init
+  ("Reset RF...") starts a few seconds later — the Mother is
+  perfectly willing to run indefinitely trying to relink to Cookies
+  even without the sen.se cloud reachable. It just loops the
+  `"nonetwork"` LED animation because the cloud-uplink health check
+  fails.
+- Useful for future testing: leave the Mother powered next to an
+  SDR and it'll keep re-initing SimpliciTI and re-issuing whatever
+  handshake frames it sends to Cookies — a free source of live
+  Mother-side downlink captures.
+
+#### Flash JedecID cross-check
+
+`Memory JedecID: 10216` decodes as:
+- Manufacturer `0x01` — Spansion / Cypress
+- Device `0x0216` — S25FL064P family
+
+Independent confirmation of the chip-marking read. The dump-path
+below still applies.
+
 ### Firmware extraction path
 
 The S25FL064P is a standard SPI serial flash with **no chip-level
@@ -627,59 +708,69 @@ bridge to Home Assistant" above already support TX).
 
 ### Open work to enable read-out
 
-Two independent paths, either of which unblocks the temperature goal:
+Now that we know the RF protocol is **TI SimpliciTI** (see UART boot
+log), the shortest path becomes:
 
-**A. Live protocol capture (external, non-invasive):**
+**A. Build a SimpliciTI Access Point that speaks to Cookies:**
 
-1. **Sniff a real Mother↔Cookie session** with the Mother powered on
-   next to an RTL-SDR at 915 MHz. Both endpoints will TX during the
-   exchange — the Mother's downlink frames reveal the request format
-   that elicits a sensor response.
-2. **Replay Mother's downlink** with TX hardware (T-Embed CC1101, or
-   Pi + CC1101 module) to elicit a Cookie response we can decode.
-3. **Identify the data-frame format** (different pattern than the X/α
-   beacons; temperature/accel will be unwhitened or simple-XOR inside).
+1. **Pull TI's SimpliciTI reference implementation** (last public
+   drop was `SimpliciTI-CCS-1.2.0` or similar; still archived in
+   TI's forums and elsewhere online).
+2. **Configure it to run on a CC1101 module** wired to a Pi (or an
+   ESP32, or a T-Embed CC1101) — SimpliciTI's HAL is portable.
+   Match the Cookie's PHY: 915 MHz US band, 100 kbps GFSK, sync
+   `0xD391`, whatever channel/PAN-ID we observe live.
+3. **Compare our observed frames** to SimpliciTI's documented header
+   layout to figure out which SimpliciTI application-layer message
+   the Cookies send (probably a periodic `Link_Send` with a small
+   payload, plus responses to `Poll`).
+4. **Issue the poll from our AP** and receive the Cookie's
+   stored-data reply. Presumably temperature + accel history are in
+   there — that's what Mother pulled to display.
 
-**B. Firmware extraction (internal, non-destructive):**
+**B. Sniff a real Mother↔Cookie exchange** to shortcut step 3:
 
-1. **Dump the Mother's SPI flash** as described in the "Firmware
-   extraction path" section — CH341A + SOIC-16 clip on U5.
-2. **Locate the downlink-frame construction code** in the PIC32
-   firmware — pattern-match by the constants we already know
-   (`0xD391` sync, protocol header bytes `1E E2 65 12` /
-   `C4 CA 25`).
-3. **Read off** the frame format directly, then hand it to path A
-   step 2 (TX replay).
+1. Sit the Mother next to an RTL-SDR (it happily loops
+   `Reset RF... / Starting SimpliciTI...` without cloud).
+2. Capture both sides at 915 MHz. The Mother's downlink frames
+   reveal exactly which SimpliciTI message it issues and how it
+   addresses a specific Cookie.
+3. That collapses step 3 above from "read SimpliciTI docs" to
+   "copy what the Mother did."
 
-Path B is deterministic; path A depends on capturing an actual
-exchange in the wild. Either feeds the final step below.
+**C. Firmware dump as a fallback / verification** (see
+"Firmware extraction path" below): dump the SPI flash if steps
+A or B stall on any ambiguity; pattern-match by the constants
+we know (`0xD391`, `1E E2 65 12`, `C4 CA 25`) to find the
+downlink-frame construction code.
 
-**Then, common to both:**
+**Then, common to all three:**
 
-4. **Plumb into HA** as previously planned (rtl_433 → MQTT, or
-   T-Embed CC1101 + ESPHome).
+4. **Plumb into HA** as previously planned — rtl_433 alone can't do
+   this (no TX), so use T-Embed CC1101 + ESPHome, or Pi + CC1101
+   with a small SimpliciTI driver.
 
 ## Open questions
 
-- **What Mother sends downlink.** Until we capture an active
-  Mother↔Cookie exchange, the request format that elicits a sensor
-  response is unknown. Confirming this also confirms whether the
-  Cookie listens for an ack or fires-and-forgets.
-- **Format of the Cookie's data-frame response** (presumably a
-  separate frame type than X/α, with the buffered sensor values).
-- **CRC validation.** Try CRC-16-CCITT (init `0xFFFF`, CC1101 default)
-  over each frame's leading bytes vs the trailing 2 bytes. If that
-  matches, whitening is off; if not, try after applying PN9.
-- **Meaning of `0x1E` at byte 1.** Constant across all captured frames
-  but doesn't equal observed frame length. Probably a protocol-version
-  or flags byte.
-- **Meaning of byte 5.** Shared between awesome you and organic
-  macarons (`0x9a`) but different for safe song (`0xea`). Hardware
-  batch? Firmware revision? Need more Cookies to triangulate.
-- **The rare `d3` / `a7` frame types.** Seen 1–2 times each across
-  long captures. Could be Mother-handshake or status frames.
+- **Map our observed frames to SimpliciTI header fields.** Now that
+  we know the stack, the byte-by-byte interpretation should fall out
+  of the SimpliciTI network-layer header definition. Specifically:
+  which byte is `port`, which is the peer-link ID, where the ACK
+  request bit lives, and how the address is encoded.
+- **Which SimpliciTI message type** the Cookie sends periodically
+  (probably a `Link_Send` on a fixed port) and how Mother polls it
+  (`Poll` on the same or a different port).
+- **CRC / whitening** — SimpliciTI defaults for CC1101 include the
+  chip's hardware CRC-16 and no whitening, but sen.se may have
+  changed the defaults. Cross-check the trailing 2 bytes against
+  CRC-16-CCITT init `0xFFFF`.
+- **Meaning of byte 5** (safe song `0xea`, awesome you + organic
+  macarons `0x9a`). Probably resolvable once we're reading the
+  SimpliciTI header instead of a byte stream.
+- **The rare `d3` / `a7` frame types.** May be SimpliciTI link/join
+  frames sent when a Cookie is trying to (re-)associate.
 - **EU 868 MHz frame layout** — assumed identical (same CC430F5137
-  supports both bands) but not verified.
+  and same SimpliciTI stack, just moved to 868) but not verified.
 
 ## References
 
