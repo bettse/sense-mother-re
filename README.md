@@ -76,7 +76,11 @@ sense-mother-re/
 │   └── mother/                    Mother PCBs after disassembly (2026-06-30)
 ├── captures/                      RF captures, one dir per session
 ├── scratch/                       analysis scripts
-└── simpliciti/                    vendored TI SimpliciTI source + SmartRF Sniffer
+├── simpliciti/                    vendored TI SimpliciTI source + SmartRF Sniffer
+└── prior-art/                     third-party SimpliciTI RE work referenced here
+    └── iSmartAlarm/               Seekintoo's 2017 iSmartAlarm attack (Python 2 +
+                                   GNU Radio flowgraph + XTEA + PN9); reference
+                                   RX pipeline that inspired ours
 ```
 
 ## What the FCC photos actually show
