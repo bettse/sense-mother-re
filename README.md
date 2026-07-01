@@ -878,9 +878,9 @@ the *same* Cookie's sessions where safe song was live. Same story for
 ## Cheaper CC1101 hardware options than the T-Embed
 
 The LilyGO T-Embed CC1101 (~$50) has been the default recommendation
-here, but its display + battery + case are nice-to-haves not required
-for a headless "SimpliciTI-to-BLE thermometer" bridge. Cheaper paths
-that end up in the same place:
+here, but its display + built-in battery + case are nice-to-haves not
+required for a headless mains-powered "SimpliciTI-to-BLE thermometer"
+bridge. Cheaper paths that end up in the same place:
 
 | option | price | pre-assembled? |
 |---|---|---|
@@ -899,9 +899,10 @@ CC1101 RX  →  Cookie SimpliciTI Join reply + PLL rx  →  parse
 temp/accel  →  BTHome BLE advertisement  →  HA auto-discovery
 ```
 
-A ready-made bedside puck = 1 ESP32-C3 + 1 CC1101 + battery + small
-case. No Wi-Fi config, no display, no serial cable. HA sees a new
-BLE thermometer show up. Libraries that reduce firmware effort:
+The final deployment is USB-powered next to the bed (or wherever the
+Cookies are placed) — nothing about the SimpliciTI-to-HA pipeline
+benefits from being battery-powered, and a wall plug removes any
+concern about receiver uptime. Libraries that reduce firmware effort:
 - `BTHomeV2` (Arduino/ESPHome library for BLE broadcast side)
 - `SmartRC-CC1101-Driver-Lib` (CC1101 SPI driver for ESP32)
 - Our vendored `simpliciti-1.2.0-mspgcc/Components/simpliciti/`
