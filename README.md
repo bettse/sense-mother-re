@@ -875,18 +875,26 @@ the *same* Cookie's sessions where safe song was live. Same story for
   powered on, and saving raw `.sub` captures for archival — but not
   a stand-in for the AP role.
 
-## Cheaper CC1101 hardware options than the T-Embed
+## CC1101 hardware options (no assembly required)
 
-The LilyGO T-Embed CC1101 (~$50) has been the default recommendation
-here, but its display + built-in battery + case are nice-to-haves not
-required for a headless mains-powered "SimpliciTI-to-BLE thermometer"
-bridge. Cheaper paths that end up in the same place:
+Fully assembled ESP32 + CC1101 boards, cheapest first:
 
-| option | price | pre-assembled? |
+| option | price | notes |
 |---|---|---|
-| **ESP32-C3 SuperMini + EByte E07-M1101D CC1101 module** | ~$5–8 total | needs 8 wire connections between the boards |
-| **Evil Crow RF** | ~$27 (assembled) | two CC1101s + ESP32 on one open-hardware PCB |
-| **LilyGO T-Embed CC1101** | ~$50 | fully assembled with 1.9" TFT + battery |
+| **Evil Crow RF** | ~$27 on AliExpress / Tindie | Two CC1101 radios + ESP32 on one open-hardware PCB. Overkill radios (we only need one) but the price is right. |
+| **LilyGO T-Embed CC1101** | ~$50 | Fully assembled with 1.9" TFT + battery. Well-supported by the `dbuezas/esphome-cc1101` ESPHome external_component so the software path is the smoothest. |
+
+Other assembled boards on Tindie (CaracalDB, FlipMods Ultra V3,
+Orange Dragon Mayhem, Rabbit-Labs CC1101 expansion) are marketed as
+Flipper Zero add-ons but the ESP32 + CC1101 combination is USB-accessible.
+They typically bundle extras we don't need (NRF24L01, SD card, case for
+Flipper) and price out at $50–80. The T-Embed is the cleanest
+purpose-fit for the same price range.
+
+**nRF52 + CC1101**: no ready-made board exists. nRF52 has cleaner
+native BLE than ESP32 (lower-power, better BTHome-broadcast fit), but
+no commercial board pairs it with CC1101 and every existing project
+would require a custom PCB. Not a no-assembly path.
 
 **BTHome-over-BLE bridge pattern.** ESP32 has native BLE and Home
 Assistant natively discovers [BTHome](https://bthome.io) sensors
