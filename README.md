@@ -885,7 +885,6 @@ bridge. Cheaper paths that end up in the same place:
 | option | price | pre-assembled? |
 |---|---|---|
 | **ESP32-C3 SuperMini + EByte E07-M1101D CC1101 module** | ~$5–8 total | needs 8 wire connections between the boards |
-| **Elecrow ESP-GRABER PCB** | $15 (bare PCB) | requires assembly + supplied components |
 | **Evil Crow RF** | ~$27 (assembled) | two CC1101s + ESP32 on one open-hardware PCB |
 | **LilyGO T-Embed CC1101** | ~$50 | fully assembled with 1.9" TFT + battery |
 
