@@ -844,11 +844,29 @@ Cookies send two distinct types of broadcasts:
   ~15 s. This is the "presence beacon" we've been chasing. Payload
   is a counter + short data byte + one more byte (function unclear,
   possibly a checksum or state).
-- **Port 3 (Join)** — 19-byte frame with an **11-byte payload** of
-  the form `[TID] 01 [XX] 08 07 06 05 02 02 [XX] [XX]`. The constant
-  `08 07 06 05` is SimpliciTI's **Link Token** (Table 8, Client Side
-  Link Payload). `02 02` is likely Rx Type + Protocol Ver. Cookie is
-  sending Link requests to whichever AP hears them.
+- **Port 3 (Join)** — 19-byte frame with an **11-byte payload**
+  matching SimpliciTI Spec Table 15 (Join Client Side Payload) with
+  a sen.se-specific 1-byte prefix and 2-byte suffix:
+  ```
+  [prefix] [Request=0x01] [TID] [Join Token=08 07 06 05]
+           [NumConn=0x02] [ProtoVer=0x02] [FCS(2)]
+  ```
+  The Cookies broadcasting on this port means **they are currently
+  unlinked** — an End Device that has successfully joined an AP stops
+  Join-broadcasting and switches to unicast. Every ~1 minute the
+  Cookies re-broadcast Join looking for a Mother to reply.
+
+  The **`08 07 06 05` Join Token is sen.se's network-wide shared
+  secret** — every sen.se Cookie and Mother carries it. Anyone with
+  a SimpliciTI-capable radio and this token can pretend to be a
+  legitimate sen.se network member.
+
+  Expected Mother reply per Spec Table 16 (Join Server Side Payload):
+  ```
+  [Req Reply=0x81] [TID echoed] [session LinkToken=4B] [FUNC/LEN=1B] [Key=N bytes]
+  ```
+  Unicast back to the Cookie's SRCADDR. Capturing this frame is the
+  next milestone — see "Open work to enable read-out" below.
 
 Both frame types are **completely plaintext** — no XTEA layer is
 active.
