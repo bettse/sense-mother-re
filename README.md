@@ -4,9 +4,6 @@ Project goal: figure out whether the original sen.se Mother hub + temperature
 Cookie (defunct since 2017 sen.se liquidation) can be revived enough to push
 bed-surface temperature readings into Home Assistant.
 
-Origin: Claude Code session `9d738d5b-6725-47fb-9432-fcc72f327f4b`
-(`~/.claude/projects/-Users-bettse-Downloads/9d738d5b-6725-47fb-9432-fcc72f327f4b.jsonl`).
-
 This folder collects FCC filings for the original hardware and my analysis of
 what's actually inside.
 
@@ -131,8 +128,6 @@ Implications:
 - Buy any Cookie on eBay — listings won't be (and shouldn't be) labeled by
   "type." Shop on quantity and condition.
 - Decoding one Cookie's frame gives you temperature for all of them.
-- Multiple Cookies = multi-zone bed sensing or redundancy. Frames should
-  carry a unique device ID byte for routing.
 
 ### Mother (MOM001)
 
