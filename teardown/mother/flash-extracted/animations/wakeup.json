@@ -1,0 +1,63 @@
+[
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "0,0,0",
+        "transition": "fade",
+        "transitionDuration": 2000,
+        "finalDuration": 0
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 4,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": "0,0,0",
+        "rightEye": "0,0,0",
+        "smile": "0,0,0",
+        "transition": "fade",
+        "transitionDuration": "50,150",
+        "finalDuration": "50,150"
+      },
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "0,0,0",
+        "transition": "fade",
+        "transitionDuration": "50,150",
+        "finalDuration": "0,500"
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "0,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": 500
+      },
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 2000,
+        "finalDuration": 1000
+      }
+    ]
+  }
+]

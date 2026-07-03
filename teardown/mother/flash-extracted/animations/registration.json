@@ -1,0 +1,25 @@
+[
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "0,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": 500
+      },
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 3000,
+        "finalDuration": 1000
+      }
+    ]
+  }
+]

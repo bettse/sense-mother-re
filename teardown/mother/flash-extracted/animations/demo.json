@@ -1,0 +1,108 @@
+[
+  {
+    "type": "light",
+    "repetition": 9,
+    "probability": 50,
+    "sequence": [
+      {
+        "leftEye": "60,100,240",
+        "rightEye": "60,100,240",
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": "1000,5000"
+      },
+      {
+        "leftEye": "240,40,120",
+        "rightEye": "240,40,120",
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": "1000,5000"
+      },
+      {
+        "leftEye": "80,240,80",
+        "rightEye": "80,240,80",
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": "1000,5000"
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 500,
+        "finalDuration": 60000
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": "0,0,0",
+        "rightEye": "0,0,0",
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": "50,150",
+        "finalDuration": "50,150"
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": "50,150",
+        "finalDuration": 60000
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 599,
+    "probability": 20,
+    "sequence": [
+      {
+        "leftEye": 999,
+        "rightEye": 999,
+        "smile": 999,
+        "transition": "fade",
+        "transitionDuration": 100,
+        "finalDuration": 0
+      }
+    ]
+  },
+  {
+    "type": "light",
+    "repetition": 0,
+    "probability": 100,
+    "sequence": [
+      {
+        "leftEye": 888,
+        "rightEye": 888,
+        "smile": "255,0,0",
+        "transition": "fade",
+        "transitionDuration": 40,
+        "finalDuration": 60000
+      }
+    ]
+  }
+]

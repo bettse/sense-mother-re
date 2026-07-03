@@ -445,7 +445,7 @@ Readable from the teardown close-ups:
 | Ref | Marking (partial) | Identification | Purpose |
 |---|---|---|---|
 | main MCU | `PIC32` (large TQFP) | Microchip PIC32-series MIPS MCU | Runs WiFi/Ethernet uplink + cloud logic |
-| `U5` | `Spansion FL064PIF` (SO-16) | Spansion / Cypress **S25FL064P** — 64 Mbit (8 MB) SPI serial flash | Firmware + web assets storage |
+| `U6` | `Spansion FL064PIF` (SO-16) | Spansion / Cypress **S25FL064P** — 64 Mbit (8 MB) SPI serial flash | Config + LED animation JSON + WAV alert sounds (NOT PIC32 code — see "Flash dump results" below) |
 | `U16` | `DAC8100` (QFN) | Audio DAC | Drives the Mother's alert sounds |
 | `Y6` (near MCU) | `8.000 MHz` HC-49 | Crystal | PIC32 main clock |
 | `Y3` (near flash) | `50.000 MHz` SMD | Crystal | Ethernet PHY clock |
@@ -587,7 +587,7 @@ The S25FL064P is a standard SPI serial flash with **no chip-level
 read protection**. It can be dumped in-circuit:
 
 ```bash
-# with a CH341A programmer + SOIC-16 test clip clipped onto U5
+# with a CH341A programmer + SOIC-16 test clip clipped onto U6
 flashrom -p ch341a_spi -c S25FL064P -r mother_flash.bin
 ```
 
@@ -612,6 +612,135 @@ What we expect in the dump:
 If the dump is encrypted after all, the fallback is to attach a UART
 adapter to `J12` and watch the Mother's serial console during a
 pairing/query attempt.
+
+### Flash dump results (fw v398, 2026-07-03)
+
+Dumped in-circuit with a **Flipper Zero + SOIC-16 clip** (SPI Mem
+Manager app, S25FL064P profile). Full 8 MiB image at
+`teardown/mother/flash-fw398.bin`; extracted assets under
+`teardown/mother/flash-extracted/`.
+
+**Chip is `U6`, not `U5`** as originally noted in the silicon table
+above — this hardware revision has the SPI flash at reference
+designator `U6`. JEDEC ID `01 02 16` matches the boot log
+(`Memory JedecID: 10216`) and confirms it's still the same S25FL064P.
+
+Practical gotchas during dumping, for future re-runs:
+
+- Providing 3.3 V via the clip's VCC pin **backfeeds through the
+  shared 3.3 V rail and boots the whole board** (chime + LED
+  animation). The PIC32 then drives SPI in parallel with the Flipper
+  and corrupts the read.
+- Fix: hold the PIC32's **MCLR to GND** during the dump. On the
+  64-pin TQFP PIC32MX (dimple at upper-right on this board), **MCLR
+  is pin 7 on the top edge, 6 pins to the left of the dimple**.
+  Shorting the 10 kΩ pull-up next to it to ground works as well.
+- Confirm reset held: with MCLR grounded the chime and LED animation
+  stop; releasing restarts them.
+- The Flipper's app offered "S25FL064A" or "S25FL064P" — pick 064P.
+  064A works too for a read-only dump (same JEDEC family, same
+  read commands) but the exact-match profile is safest.
+
+#### Big finding: PIC32 firmware is NOT on this flash
+
+The 8 MiB dump is **97.5 % empty (`0xFF`)** — only ~213 KiB of real
+content. Zero occurrences of the SimpliciTI Join Token `08 07 06 05`,
+CC1101 sync word `0xD391`, any Cookie SRCADDR, or version strings.
+The PIC32's application code lives in the **PIC32's internal
+program flash** (up to 512 KB on-chip). This external SPI is only
+a bulk store for config + assets:
+
+| Region | Size | Contents |
+|---|---|---|
+| `0x000000-0x000529` | 1.3 KiB | Boot config: device name, cloud URL, two lookup tables (see below) |
+| `0x0E0000-0x0E21D6` | 8.7 KiB | 11 LED-choreography JSON blobs |
+| `0x200000-0x2369B4` | 223 KiB | 5 WAV alert sounds, 16 kHz 16-bit mono PCM |
+| everything else | ~7.8 MiB | Blank (`0xFF`) — reserved / unused |
+
+#### Config header lookup tables
+
+The config header contains two 24-byte-record arrays that map state
+names to `(size, offset)` locations in the flash. Same record format
+in both tables:
+
+```
+offset  field
+ 0..15  name  (null-terminated ASCII, remainder padded with 0x00)
+16..19  size  (little-endian u32)
+20..23  offset (little-endian u32)
+```
+
+**Table 1 at `0x0081`** — 5 sound names → WAV file locations:
+
+| Name | Offset | Size |
+|---|---|---|
+| `nonetwork` | `0x200000` | 12,122 B |
+| `registration` | `0x203000` | 89,250 B |
+| `start` | `0x218D00` | 76,044 B — the boot chime |
+| `noregistration` | `0x22B700` | 24,254 B |
+| `noplateform` | `0x231600` | 21,428 B |
+
+**Table 2 at `0x0355`** — 11 animation names → JSON blob locations:
+
+| Name | Offset | Size |
+|---|---|---|
+| `noregistration` | `0x0E0000` | 299 B |
+| `registration` | `0x0E0200` | 292 B |
+| `start` | `0x0E0400` | 687 B — the only blob with a `soundId` step |
+| `upgrading` | `0x0E0700` | 188 B |
+| `noplateform` | `0x0E0800` | 296 B |
+| `wakeup` | `0x0E0A00` | 780 B |
+| `nonetwork` | `0x0E0E00` | 296 B |
+| `sleep` | `0x0E1000` | 628 B |
+| `demo` | `0x0E1300` | 1,387 B |
+| `idle` | `0x0E1900` | 1,230 B |
+| `newstate` | `0x0E1E00` | 982 B |
+
+Concrete take-away: **4 of the 5 sounds are cloud-registration state
+cues** — `registration` (89 KB — successful register), `noregistration`
+(reg failed), `nonetwork` (no LAN link), `noplateform` (cloud
+unreachable) — plus `start` (the boot chime). Every failure mode of
+the `in.sen.se` uplink had its own distinct audio.
+
+`scratch/parse_config_tables.py` parses both tables from the raw
+flash. `scratch/flash_extract.py` is table-driven and drops each
+animation/WAV under its concrete state name at
+`flash-extracted/animations/<state>.json` and
+`flash-extracted/audio/<state>.wav`. WAVs are playable directly with
+any WAV player (`afplay` on macOS, etc.).
+
+Each animation blob is a JSON array of
+`{"type":"light","sequence":[{"leftEye":…,"rightEye":…,"smile":…,
+"transition":"fade",…}]}` steps. Two special values recur: `888`
+(Mother's blue breathing idle color) and `999` (bright flash). Only
+the `start` blob mixes a `"type":"sound"` step (with
+`soundId:"start"`, which resolves through Table 1 above) into the
+light steps to sequence the boot chime + LED sweep — every other
+animation is light-only. The other four sounds are triggered by
+code paths outside the animation engine, presumably from PIC32
+internal firmware directly.
+
+#### Implications for reverse engineering
+
+- **The Mother's SimpliciTI downlink code cannot be recovered from
+  this flash.** It lives inside the PIC32. Extraction would need
+  ICSP (5-pin PGC/PGD/MCLR/VCC/GND) and only succeeds if the
+  code-protect fuses weren't set at production. Not attempted.
+- Fortunately, **we don't need it** to build a SimpliciTI AP: the
+  protocol is public, TI's own reference source is vendored in
+  `simpliciti/simpliciti-1.2.0-mspgcc/`, and the sen.se-specific
+  bits (Join Token `08 07 06 05`, sync word `0xD391`, PN9
+  whitening, no encryption) are already reverse-engineered from
+  the RF captures. This flash was a "verification would be nice"
+  path, not a critical one.
+- The one thing that survives being on external flash — the
+  animation JSON schema — is a small but interesting piece of the
+  original sen.se firmware design and is now preserved verbatim
+  in `flash-extracted/animations/`.
+- Bonus confirmation of the boot-with-clip behavior: when the
+  clip's 3.3 V woke the board, the PIC32 was reading these
+  animations and WAVs while playing the startup chime — that's
+  exactly when it was fighting the Flipper on SPI.
 
 ## Experiments run
 

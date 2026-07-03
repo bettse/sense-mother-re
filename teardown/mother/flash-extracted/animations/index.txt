@@ -1,0 +1,12 @@
+# name → animation JSON (Table 2 at 0x0355)
+  noregistration        0x0e0000    299B  first_type=light
+  registration          0x0e0200    292B  first_type=light
+  start                 0x0e0400    687B  first_type=sound
+  upgrading             0x0e0700    188B  first_type=light
+  noplateform           0x0e0800    296B  first_type=light
+  wakeup                0x0e0a00    780B  first_type=light
+  nonetwork             0x0e0e00    296B  first_type=light
+  sleep                 0x0e1000    628B  first_type=light
+  demo                  0x0e1300   1387B  first_type=light
+  idle                  0x0e1900   1230B  first_type=light
+  newstate              0x0e1e00    982B  first_type=light

@@ -1,0 +1,6 @@
+# name → WAV file (Table 1 at 0x0081)
+  nonetwork             0x200000   12122B  16000Hz 16bit mono
+  registration          0x203000   89250B  16000Hz 16bit mono
+  start                 0x218d00   76044B  16000Hz 16bit mono
+  noregistration        0x22b700   24254B  16000Hz 16bit mono
+  noplateform           0x231600   21428B  16000Hz 16bit mono
