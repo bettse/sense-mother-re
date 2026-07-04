@@ -37,12 +37,13 @@ static const uint8_t sense_cc1101_preset[] = {
     // Packet handling
     0x06 /* PKTLEN   */, 0xFF,
     0x07 /* PKTCTRL1 */, 0x04, // APPEND_STATUS=1, no addr filter
-    0x08 /* PKTCTRL0 */, 0x41, // WHITE_DATA=1, PKT_FORMAT=00, CRC_EN=0, LENGTH_CONFIG=01 (var).
-                               // Reverted from 0x45 (CRC_EN=1): with CRC on, our TX ended
-                               // in MARCSTATE=0x16 (TXFIFO_UNDERFLOW) even though we wrote
-                               // the full LEN+body to FIFO. Backing CRC off to test whether
-                               // that's what's aborting the packet mid-flight. RX noise
-                               // filtering can move to a length-based check in software.
+    0x08 /* PKTCTRL0 */, 0x45, // WHITE_DATA=1, PKT_FORMAT=00, CRC_EN=1, LENGTH_CONFIG=01 (var).
+                               // Cookies send with CC1101 defaults which include CRC_EN=1,
+                               // so they'll reject frames without a valid CCITT CRC. On our
+                               // TX side, CRC_EN=1 also auto-appends 2 CRC bytes after the
+                               // LEN-declared body. The earlier UNDERFLOW-with-CRC-on issue
+                               // was really about the combined-burst FIFO write, not CRC;
+                               // split writes (single-byte LEN + burst body) fix both.
     // Sync word 0xD391
     0x04 /* SYNC1    */, 0xD3,
     0x05 /* SYNC0    */, 0x91,

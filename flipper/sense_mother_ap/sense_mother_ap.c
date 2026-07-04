@@ -170,13 +170,11 @@ static size_t build_join_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t
 static bool cc1101_tx_packet(const uint8_t* frame, size_t len) {
     furi_hal_subghz_idle();
     cc1101_strobe(CC1101_STROBE_SFTX);
-    // Replicate stock furi_hal_subghz_write_packet: LEN via a single-byte
-    // register-style write, then body via burst. The diagnostic pad test
-    // showed CC1101 was NOT stopping at LEN when we did LEN + body as one
-    // burst; splitting might land the write into the FIFO in a way the
-    // packet-length hardware picks up.
-    uint8_t len_byte = frame[0];
-    cc1101_write_single_reg(CC1101_FIFO, len_byte);
+    // Split: LEN via single-byte register write, body via burst. Combined
+    // burst writes trigger CC1101 TXFIFO_UNDERFLOW at end-of-packet — the
+    // chip apparently doesn't decode LEN correctly if it arrives inside a
+    // multi-byte burst. Split matches stock furi_hal_subghz_write_packet.
+    cc1101_write_single_reg(CC1101_FIFO, frame[0]);
     if(len > 1) cc1101_write_fifo(&frame[1], len - 1);
 
     if(!furi_hal_subghz_tx()) {

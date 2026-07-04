@@ -99,8 +99,8 @@ sniff-tx:  ## rtl_433 for RTL_DUR sec, auto-firing test-TX every 2s via sense_ap
 		echo "*** firing $$bursts test-TX bursts during $(RTL_DUR)s rtl_433 window ***"; \
 		python3 $(REPO_ROOT)/scratch/fire_tx.py $$bursts 2.0; \
 		wait $$rtl_pid 2>/dev/null || true
-	@echo "--- all dewhitened frames ---"
-	@python3 $(REPO_ROOT)/scratch/dewhiten_hits.py $(RTL_HITS)
+	@echo "--- ALL rtl_433 hits (long + short) ---"
+	@python3 $(REPO_ROOT)/scratch/all_hits.py $(RTL_HITS)
 	@echo "--- our AP TX matches ---"
 	@python3 $(REPO_ROOT)/scratch/find_our_tx.py $(RTL_HITS)
 
