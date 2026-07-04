@@ -43,8 +43,10 @@
 
 #define CC1101_STROBE_SRES  0x30
 #define CC1101_STROBE_SRX   0x34
+#define CC1101_STROBE_STX   0x35
 #define CC1101_STROBE_SIDLE 0x36
 #define CC1101_STROBE_SFRX  0x3A
+#define CC1101_STROBE_SFTX  0x3B
 #define CC1101_STROBE_SNOP  0x3D
 
 #define CC1101_STATUS_RXBYTES   0x3B
@@ -92,10 +94,75 @@ static void cc1101_read_fifo(uint8_t* dst, size_t len) {
     furi_hal_spi_release(&furi_hal_spi_bus_handle_subghz);
 }
 
+static void cc1101_write_fifo(const uint8_t* src, size_t len) {
+    if(len == 0) return;
+    uint8_t addr = CC1101_FIFO | CC1101_BURST_BIT;
+    furi_hal_spi_acquire(&furi_hal_spi_bus_handle_subghz);
+    furi_hal_spi_bus_tx(&furi_hal_spi_bus_handle_subghz, &addr, 1, 100);
+    furi_hal_spi_bus_tx(&furi_hal_spi_bus_handle_subghz, src, len, 100);
+    furi_hal_spi_release(&furi_hal_spi_bus_handle_subghz);
+}
+
 // CC1101 RSSI decode (datasheet §17.3): signed offset + fixed -74 offset.
 static int cc1101_decode_rssi(uint8_t raw) {
     int r = raw >= 128 ? (int)raw - 256 : (int)raw;
     return (r / 2) - 74;
+}
+
+// ── SimpliciTI Join reply ───────────────────────────────────────────
+//
+// Full protocol writeup in JOIN.md. Short version:
+//   Cookie broadcasts port-3 with app payload:
+//     [prefix][REQ=0x01][TID][Token=08 07 06 05][NumConn][ProtoVer]
+//   AP replies unicast port-3 with (TI stock 7-byte body):
+//     [REQ|REPLY=0x81][TID echo][LinkToken(4)][CryptKeySize=0]
+
+// AP address printed in-repo. `DE AD BE EF` — easy to spot in captures,
+// doesn't collide with any real Mother address the SDR has seen.
+static const uint8_t AP_ADDR[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+// LinkToken: arbitrary opaque 4 bytes. TI's ref uses 0xDEADBEEF too.
+static const uint8_t LINK_TOKEN[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+
+// Build the reply frame (LEN byte then body). Returns total bytes written.
+static size_t build_join_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t tid) {
+    // body = DST(4) + SRC(4) + PORT(1) + DEVINFO(1) + app(7) = 17
+    out[0] = 17; // LEN — counts bytes after LEN, excluding CC1101-appended CRC
+    memcpy(&out[1], cookie_addr, 4); // DSTADDR = Cookie's SRC
+    memcpy(&out[5], AP_ADDR, 4);     // SRCADDR = our AP address
+    out[9] = 0x03;                   // PORT = SMPL_PORT_JOIN
+    out[10] = 0x20;                  // DEVINFO: sender=AP (bits 5:4 = 10), hop=0
+    out[11] = 0x81;                  // REQ_JOIN | NWK_APP_REPLY_BIT
+    out[12] = tid;                   // echo Cookie's TID
+    memcpy(&out[13], LINK_TOKEN, 4);
+    out[17] = 0x00;                  // CryptKeySize = 0 (no encryption)
+    return 18;
+}
+
+// Send a preformed frame via CC1101 packet-mode TX. The CC1101 auto-adds
+// PN9 whitening (WHITE_DATA=1) and CCITT CRC (CRC_EN=1) per our preset.
+//
+// State-machine handling is delegated to furi_hal_subghz_idle / _tx so we
+// get their internal wait-for-state furi_check semantics — the raw SIDLE
+// strobe path made a previous version reach STX before CC1101 had settled
+// in IDLE, and `furi_check(cc1101_wait_status_state(..., CC1101StateTX, 10000))`
+// inside furi_hal_subghz_tx tripped and rebooted the Flipper.
+static bool cc1101_tx_packet(const uint8_t* frame, size_t len) {
+    furi_hal_subghz_idle();
+    cc1101_strobe(CC1101_STROBE_SFTX);
+    cc1101_write_fifo(frame, len);
+
+    if(!furi_hal_subghz_tx()) {
+        FURI_LOG_E(TAG, "furi_hal_subghz_tx() denied by regulation");
+        return false;
+    }
+
+    // Transmission is autonomous once we're in TX. 18 body + 2 CRC + preamble +
+    // sync at 100 kbps ≈ 2.5 ms. MCSM1 TXOFF_MODE default (00 = IDLE) drops
+    // us back to IDLE when the FIFO drains. Blind-delay 10 ms then explicitly
+    // idle so caller can safely re-enter RX.
+    furi_delay_ms(10);
+    furi_hal_subghz_idle();
+    return true;
 }
 
 // ── UI state ────────────────────────────────────────────────────────
@@ -104,6 +171,8 @@ typedef struct {
     FuriMutex* mutex;
     uint32_t frame_count;
     uint32_t bad_count;
+    uint32_t join_rx_count;  // Cookie Join broadcasts seen
+    uint32_t join_tx_count;  // Join replies we've sent
     uint8_t last_src[4];
     uint8_t last_port;
     int last_rssi;
@@ -115,6 +184,10 @@ typedef struct {
     AppState* state;
     FuriMessageQueue* input_queue;
     FuriThread* rx_thread;
+    // When set, the RX worker fires one test TX at the next loop iteration
+    // instead of waiting for a Cookie Join. Cleared by the worker after it
+    // fires so the button press behaves as a one-shot.
+    volatile bool test_tx_pending;
 } App;
 
 // ── Render ──────────────────────────────────────────────────────────
@@ -147,11 +220,13 @@ static void render_cb(Canvas* c, void* ctx) {
             s.last_join ? "JOIN" : "");
         canvas_draw_str(c, 2, 36, buf);
         snprintf(buf, sizeof(buf), "RSSI %d dBm", s.last_rssi);
-        canvas_draw_str(c, 2, 48, buf);
+        canvas_draw_str(c, 2, 46, buf);
     } else {
         canvas_draw_str(c, 2, 36, "listening…");
     }
-    canvas_draw_str(c, 2, 62, "back = quit");
+    snprintf(buf, sizeof(buf), "join rx:%lu tx:%lu", s.join_rx_count, s.join_tx_count);
+    canvas_draw_str(c, 2, 56, buf);
+    canvas_draw_str(c, 2, 63, "^=test-tx back=quit");
 }
 
 static void input_cb(InputEvent* ev, void* ctx) {
@@ -217,6 +292,27 @@ static int32_t rx_thread(void* ctx) {
     uint8_t frame[64];
 
     while(s->running) {
+        // Manual test-TX: UP arrow on the Flipper sends a canned Join reply
+        // to a fake Cookie address `CA FE F0 0D`, TID 0x42. Lets us iterate
+        // on TX code without needing a live Join broadcast every time.
+        if(app->test_tx_pending) {
+            app->test_tx_pending = false;
+            static const uint8_t FAKE_COOKIE[4] = {0xCA, 0xFE, 0xF0, 0x0D};
+            uint8_t reply[24];
+            size_t reply_len = build_join_reply(reply, FAKE_COOKIE, 0x42);
+            FURI_LOG_I(TAG, "manual test-TX (fake cookie CAFEF00D)");
+            if(cc1101_tx_packet(reply, reply_len)) {
+                FURI_LOG_I(TAG, "test-TX ok");
+                furi_mutex_acquire(s->mutex, FuriWaitForever);
+                s->join_tx_count++;
+                furi_mutex_release(s->mutex);
+            } else {
+                FURI_LOG_W(TAG, "test-TX failed");
+            }
+            cc1101_strobe(CC1101_STROBE_SFRX);
+            furi_hal_subghz_rx();
+        }
+
         // Poll RXBYTES. Datasheet: read this register twice; if the
         // second read matches the first, the value is stable. Bit 7
         // is RXFIFO_OVERFLOW.
@@ -314,13 +410,48 @@ static int32_t rx_thread(void* ctx) {
             payload_hex,
             sense_frame_is_join(&f) ? " <JOIN>" : "");
 
+        bool is_join = sense_frame_is_join(&f);
+
         furi_mutex_acquire(s->mutex, FuriWaitForever);
         s->frame_count++;
         memcpy(s->last_src, f.srcaddr, 4);
         s->last_port = f.port;
         s->last_rssi = rssi;
-        s->last_join = sense_frame_is_join(&f);
+        s->last_join = is_join;
+        if(is_join) s->join_rx_count++;
         furi_mutex_release(s->mutex);
+
+        // Phase 2: reply to Join broadcasts.
+        // Sen.se's variant has a 1-byte prefix before the standard SimpliciTI
+        // Join body, so TID lives at payload[2] not payload[1]. See JOIN.md.
+        if(is_join && f.payload_len >= 3) {
+            uint8_t tid = f.payload[2];
+            uint8_t reply[24];
+            size_t reply_len = build_join_reply(reply, f.srcaddr, tid);
+
+            FURI_LOG_I(
+                TAG,
+                "sending Join reply to %02x%02x%02x%02x tid=%u",
+                f.srcaddr[0],
+                f.srcaddr[1],
+                f.srcaddr[2],
+                f.srcaddr[3],
+                tid);
+
+            if(cc1101_tx_packet(reply, reply_len)) {
+                furi_mutex_acquire(s->mutex, FuriWaitForever);
+                s->join_tx_count++;
+                furi_mutex_release(s->mutex);
+                FURI_LOG_I(TAG, "Join reply sent");
+            } else {
+                FURI_LOG_W(TAG, "Join reply TX failed");
+            }
+
+            // Back to RX. MCSM1 default takes us to IDLE after TX; kick RX
+            // explicitly (and flush any stale bytes that arrived during TX).
+            cc1101_strobe(CC1101_STROBE_SFRX);
+            furi_hal_subghz_rx();
+        }
     }
 
     // Cleanup: return radio to IDLE
@@ -363,6 +494,9 @@ int32_t sense_mother_ap_main(void* p) {
     while(true) {
         if(furi_message_queue_get(app.input_queue, &ev, 100) == FuriStatusOk) {
             if(ev.type == InputTypeShort && ev.key == InputKeyBack) break;
+            if(ev.type == InputTypeShort && ev.key == InputKeyUp) {
+                app.test_tx_pending = true; // RX worker picks this up
+            }
         }
         view_port_update(vp);
     }
