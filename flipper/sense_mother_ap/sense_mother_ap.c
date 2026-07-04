@@ -15,7 +15,17 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
+#include <cli/cli.h>
+#include <toolbox/cli/cli_command.h>
 #include <string.h>
+
+// RECORD_INPUT_EVENTS is defined in input/input.h — this is the raw
+// FuriPubSub used for both hardware and CLI-injected input events.
+// GUI service subscribes to this record too, but its dispatcher filters
+// CLI events (they lack a matching Press→Release sequence). By
+// subscribing directly we skip that filter — the CLI `input send up short`
+// command reaches us, which lets us drive the app from a script without
+// touching the D-pad.
 
 #include "cc1101_preset.h"
 #include "pn9.h"
@@ -50,6 +60,7 @@
 #define CC1101_STROBE_SNOP  0x3D
 
 #define CC1101_STATUS_RXBYTES   0x3B
+#define CC1101_STATUS_TXBYTES   0x3A
 #define CC1101_STATUS_PKTSTATUS 0x38
 #define CC1101_STATUS_MARCSTATE 0x35
 #define CC1101_STATUS_RSSI      0x34
@@ -103,6 +114,16 @@ static void cc1101_write_fifo(const uint8_t* src, size_t len) {
     furi_hal_spi_release(&furi_hal_spi_bus_handle_subghz);
 }
 
+// Single-byte register write (no burst bit). Used for the FIFO LEN byte in
+// packet-mode TX — stock furi_hal_subghz_write_packet does it this way.
+static void cc1101_write_single_reg(uint8_t reg, uint8_t val) {
+    uint8_t tx[2] = {reg, val};
+    uint8_t rx[2] = {0, 0};
+    furi_hal_spi_acquire(&furi_hal_spi_bus_handle_subghz);
+    furi_hal_spi_bus_trx(&furi_hal_spi_bus_handle_subghz, tx, rx, 2, 100);
+    furi_hal_spi_release(&furi_hal_spi_bus_handle_subghz);
+}
+
 // CC1101 RSSI decode (datasheet §17.3): signed offset + fixed -74 offset.
 static int cc1101_decode_rssi(uint8_t raw) {
     int r = raw >= 128 ? (int)raw - 256 : (int)raw;
@@ -149,18 +170,48 @@ static size_t build_join_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t
 static bool cc1101_tx_packet(const uint8_t* frame, size_t len) {
     furi_hal_subghz_idle();
     cc1101_strobe(CC1101_STROBE_SFTX);
-    cc1101_write_fifo(frame, len);
+    // Replicate stock furi_hal_subghz_write_packet: LEN via a single-byte
+    // register-style write, then body via burst. The diagnostic pad test
+    // showed CC1101 was NOT stopping at LEN when we did LEN + body as one
+    // burst; splitting might land the write into the FIFO in a way the
+    // packet-length hardware picks up.
+    uint8_t len_byte = frame[0];
+    cc1101_write_single_reg(CC1101_FIFO, len_byte);
+    if(len > 1) cc1101_write_fifo(&frame[1], len - 1);
 
     if(!furi_hal_subghz_tx()) {
         FURI_LOG_E(TAG, "furi_hal_subghz_tx() denied by regulation");
         return false;
     }
 
-    // Transmission is autonomous once we're in TX. 18 body + 2 CRC + preamble +
-    // sync at 100 kbps ≈ 2.5 ms. MCSM1 TXOFF_MODE default (00 = IDLE) drops
-    // us back to IDLE when the FIFO drains. Blind-delay 10 ms then explicitly
-    // idle so caller can safely re-enter RX.
-    furi_delay_ms(10);
+    // Snapshot MARCSTATE + TXBYTES immediately after TX starts. If the chip
+    // really is transmitting, MARCSTATE should be 0x13 (TX) briefly then 0x14
+    // (TX_END) then 0x01 (IDLE); TXBYTES should drain from 18 → 0. If the PA
+    // is silently gated we'd see MARCSTATE stuck or TXBYTES not draining.
+    uint8_t marc_start = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
+    uint8_t txb_start = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
+
+    // Transmission is autonomous once we're in TX. Sample MARCSTATE at three
+    // moments so we can tell "still transmitting" (13/14) from "clean IDLE"
+    // (01) from "underflowed mid-packet" (16). At 100 kbps, 20 on-air bytes
+    // finish in ~1.8 ms, so 5 ms mid, 50 ms late.
+    furi_delay_ms(5);
+    uint8_t marc_mid = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
+    uint8_t txb_mid = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
+
+    furi_delay_ms(45);
+    uint8_t marc_end = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
+    uint8_t txb_end = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
+    FURI_LOG_I(
+        TAG,
+        "tx: MARCSTATE %02x@0 → %02x@5ms → %02x@50ms  TXBYTES %u/%u/%u",
+        marc_start,
+        marc_mid,
+        marc_end,
+        txb_start,
+        txb_mid,
+        txb_end);
+
     furi_hal_subghz_idle();
     return true;
 }
@@ -188,6 +239,8 @@ typedef struct {
     // instead of waiting for a Cookie Join. Cleared by the worker after it
     // fires so the button press behaves as a one-shot.
     volatile bool test_tx_pending;
+    FuriPubSub* input_events;
+    FuriPubSubSubscription* input_sub;
 } App;
 
 // ── Render ──────────────────────────────────────────────────────────
@@ -234,6 +287,37 @@ static void input_cb(InputEvent* ev, void* ctx) {
     furi_message_queue_put(app->input_queue, ev, FuriWaitForever);
 }
 
+// Direct-subscription callback on the RECORD_INPUT_EVENTS pubsub. Fires
+// for BOTH hardware events (before the GUI filter) and CLI events (which
+// the GUI filter would otherwise drop). We fan them into the same queue.
+static void input_pubsub_cb(const void* message, void* ctx) {
+    App* app = ctx;
+    const InputEvent* ev = message;
+    // Hardware events also arrive here — we let the GUI dispatch handle
+    // those via input_cb. Filter to CLI (software) events only to avoid
+    // duplicate queueing.
+    if(ev->sequence_source == INPUT_SEQUENCE_SOURCE_HARDWARE) return;
+    furi_message_queue_put(app->input_queue, ev, 0);
+}
+
+// CLI command: `sense_ap tx` fires a test TX; anything else prints usage.
+// Runs on the CLI's own thread, so we just poke the pending flag and
+// return — the RX worker consumes it. That path was blocked when we
+// tried `input send up short` because Flipper's GUI service filters CLI
+// input events that don't have a matching physical Press event; a custom
+// CLI command sidesteps the whole GUI input state machine.
+static void sense_ap_cli_cb(PipeSide* pipe, FuriString* args, void* context) {
+    UNUSED(pipe);
+    App* app = context;
+    const char* arg = furi_string_get_cstr(args);
+    if(strncmp(arg, "tx", 2) == 0) {
+        app->test_tx_pending = true;
+        printf("test-TX queued\r\n");
+    } else {
+        printf("usage: sense_ap tx\r\n");
+    }
+}
+
 // Loader's "close current app" path is furi_thread_signal(app_thread,
 // FuriSignalExit, NULL). Without a handler `loader_signal` returns false
 // and the CLI prints "has to be closed manually" (loader_cli.c:85).
@@ -265,9 +349,13 @@ static int32_t rx_thread(void* ctx) {
     // Preset — writes registers then PATable
     furi_hal_subghz_load_custom_preset((uint8_t*)sense_cc1101_preset);
 
-    // Frequency + path. Newer OFW/Momentum both accept plain set_frequency
-    // and internally pick the path filter.
-    furi_hal_subghz_set_frequency(SENSE_FREQ);
+    // set_frequency_and_path sets both the CC1101 tuning registers AND the
+    // external SPDT antenna switch (via CC1101 GDO2 + gpio_rf_sw_0). Plain
+    // set_frequency skips the switch — RX still works because the switch was
+    // left in a passable state after boot, but TX RF then goes into the
+    // RX-tuned path and never reaches the antenna. Cost us hours of "chip
+    // enters TX state cleanly but no signal on the SDR" debugging.
+    furi_hal_subghz_set_frequency_and_path(SENSE_FREQ);
 
     // Verify the preset actually reached the CC1101.
     // Expected with our preset loaded: MDMCFG4=2D MDMCFG3=3B MDMCFG2=13
@@ -487,15 +575,32 @@ int32_t sense_mother_ap_main(void* p) {
     // the user having to back out manually.
     furi_thread_set_signal_callback(furi_thread_get_current(), exit_signal_cb, &app);
 
+    // Subscribe directly to the input events pubsub so we can pick up
+    // CLI-injected events that the GUI dispatcher would otherwise filter.
+    app.input_events = furi_record_open(RECORD_INPUT_EVENTS);
+    app.input_sub = furi_pubsub_subscribe(app.input_events, input_pubsub_cb, &app);
+
+    // Register `sense_ap tx` CLI command so a script can trigger a test-TX
+    // over USB CDC without a physical button press.
+    CliRegistry* cli = furi_record_open(RECORD_CLI);
+    cli_registry_add_command(cli, "sense_ap", CliCommandFlagParallelSafe, sense_ap_cli_cb, &app);
+    furi_record_close(RECORD_CLI);
+
     app.rx_thread = furi_thread_alloc_ex("SenseRX", 4096, rx_thread, &app);
     furi_thread_start(app.rx_thread);
 
     InputEvent ev;
     while(true) {
         if(furi_message_queue_get(app.input_queue, &ev, 100) == FuriStatusOk) {
+            FURI_LOG_I(TAG, "input key=%u type=%u seq=%lu", ev.key, ev.type, ev.sequence);
             if(ev.type == InputTypeShort && ev.key == InputKeyBack) break;
-            if(ev.type == InputTypeShort && ev.key == InputKeyUp) {
-                app.test_tx_pending = true; // RX worker picks this up
+            // Fire test-TX on UP regardless of type (Press / Short / Release).
+            // CLI `input send up short` synthesizes a single InputTypeShort;
+            // physical UP goes Press → Release → Short after debounce. Any of
+            // them counts as "user asked for a test-TX", we just dedupe by
+            // clearing the pending flag when the worker consumes it.
+            if(ev.key == InputKeyUp) {
+                app.test_tx_pending = true;
             }
         }
         view_port_update(vp);
@@ -506,6 +611,15 @@ int32_t sense_mother_ap_main(void* p) {
     furi_thread_free(app.rx_thread);
 
     furi_thread_set_signal_callback(furi_thread_get_current(), NULL, NULL);
+
+    furi_pubsub_unsubscribe(app.input_events, app.input_sub);
+    furi_record_close(RECORD_INPUT_EVENTS);
+
+    {
+        CliRegistry* cli = furi_record_open(RECORD_CLI);
+        cli_registry_delete_command(cli, "sense_ap");
+        furi_record_close(RECORD_CLI);
+    }
 
     furi_hal_power_suppress_charge_exit();
 

@@ -6,6 +6,7 @@
 
 FLIPPER_UART      ?= /dev/cu.usbserial-834220
 FLIPPER_BAUD      ?= 230400
+FLIPPER_CDC       ?= $(firstword $(wildcard /dev/cu.usbmodemflip*))
 SCREEN_SESSION    ?= fliplog
 SCREEN_LOG        ?= /tmp/screenlog.0
 RTL_FREQ          ?= 915M
@@ -13,9 +14,10 @@ RTL_DUR           ?= 30
 RTL_HITS          ?= /tmp/cookie_hits.json
 REPO_ROOT         := $(shell git rev-parse --show-toplevel 2>/dev/null || echo ../..)
 
-.PHONY: help build launch try monitor monitor-stop monitor-status log tail rtl parse sniff clean full
+.PHONY: help build launch try monitor monitor-stop monitor-status log tail rtl parse sniff clean full tx sniff-tx rf-probe
 
-WAIT ?= 45
+WAIT  ?= 45
+COUNT ?= 1
 
 help:  ## Show this help
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -74,6 +76,33 @@ parse:  ## Parse the most recent rtl_433 capture
 	@python3 $(REPO_ROOT)/scratch/parse_frames.py $(RTL_HITS) 2>&1 | tail -30
 
 sniff: rtl parse  ## rtl_433 capture then decode  (RTL_DUR=<sec> to override)
+
+tx:  ## Fire N test-TX(s) via our sense_ap CLI command (works when app is running)
+	@python3 $(REPO_ROOT)/scratch/fire_tx.py $(COUNT) 0.6
+	@sleep 2
+	@echo "--- last 5 SenseMotherAP test-TX lines ---"
+	@grep -a "test-TX" $(SCREEN_LOG) | tail -5
+
+rf-probe:  ## Record 8s of raw IQ at 915 MHz while firing test-TX; report if signal energy is visible above noise
+	@python3 $(REPO_ROOT)/scratch/raw_rf_probe.py & probe_pid=$$!; \
+		sleep 1; \
+		python3 $(REPO_ROOT)/scratch/fire_tx.py 4 1.5; \
+		wait $$probe_pid
+
+sniff-tx:  ## rtl_433 for RTL_DUR sec, auto-firing test-TX every 2s via sense_ap CLI, then scan
+	@rm -f $(RTL_HITS)
+	@timeout $(RTL_DUR) rtl_433 -f $(RTL_FREQ) -s 2400000 \
+		-X 'n=cookie,m=FSK_PCM,s=10,l=10,r=400,preamble=d391' \
+		-F "json:$(RTL_HITS)" -M level 2>/dev/null & rtl_pid=$$!; \
+		sleep 2; \
+		bursts=$$(( ($(RTL_DUR) - 2) / 2 )); \
+		echo "*** firing $$bursts test-TX bursts during $(RTL_DUR)s rtl_433 window ***"; \
+		python3 $(REPO_ROOT)/scratch/fire_tx.py $$bursts 2.0; \
+		wait $$rtl_pid 2>/dev/null || true
+	@echo "--- all dewhitened frames ---"
+	@python3 $(REPO_ROOT)/scratch/dewhiten_hits.py $(RTL_HITS)
+	@echo "--- our AP TX matches ---"
+	@python3 $(REPO_ROOT)/scratch/find_our_tx.py $(RTL_HITS)
 
 clean:  ## Remove ufbt build artifacts
 	rm -rf dist .vscode

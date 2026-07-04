@@ -37,10 +37,12 @@ static const uint8_t sense_cc1101_preset[] = {
     // Packet handling
     0x06 /* PKTLEN   */, 0xFF,
     0x07 /* PKTCTRL1 */, 0x04, // APPEND_STATUS=1, no addr filter
-    0x08 /* PKTCTRL0 */, 0x45, // WHITE_DATA=1, PKT_FORMAT=00, CRC_EN=1, LENGTH_CONFIG=01 (var).
-                               // CRC_EN=1 makes the CC1101 auto-drop packets whose 2-byte
-                               // CCITT FCS doesn't match — clean noise filter if sen.se
-                               // uses standard CC1101 CRC (they should, TI's default).
+    0x08 /* PKTCTRL0 */, 0x41, // WHITE_DATA=1, PKT_FORMAT=00, CRC_EN=0, LENGTH_CONFIG=01 (var).
+                               // Reverted from 0x45 (CRC_EN=1): with CRC on, our TX ended
+                               // in MARCSTATE=0x16 (TXFIFO_UNDERFLOW) even though we wrote
+                               // the full LEN+body to FIFO. Backing CRC off to test whether
+                               // that's what's aborting the packet mid-flight. RX noise
+                               // filtering can move to a length-based check in software.
     // Sync word 0xD391
     0x04 /* SYNC1    */, 0xD3,
     0x05 /* SYNC0    */, 0x91,
