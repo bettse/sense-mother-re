@@ -54,7 +54,13 @@ static const uint8_t sense_cc1101_preset[] = {
     // Chosen empirically: rtl_433's working flex decoder uses s=10 µs → 100 kbps.
     0x10 /* MDMCFG4  */, 0x8B, // CHANBW_E=2 CHANBW_M=0 (BW=203 kHz), DRATE_E=11
     0x11 /* MDMCFG3  */, 0xF8, // DRATE_M=248 -> 99.98 kbps
-    0x12 /* MDMCFG2  */, 0x13, // 2-GFSK, sync mode 30/32 + carrier sense
+    0x12 /* MDMCFG2  */, 0x13, // 2-GFSK, sync mode 30/32 + carrier sense.
+                               // Tried 0x12 (16/16 no CS) to catch more marginal Cookie
+                               // packets when the SDR was proving Cookie was on-air but
+                               // Flipper missed them — but that just fills the FIFO with
+                               // noise-triggered "packets" (rssi -105 empty payloads) and
+                               // makes it worse. The real cause of misses is likely
+                               // Cookie-Flipper distance, not sync sensitivity.
     0x13 /* MDMCFG1  */, 0x22, // 4-byte preamble, CHANSPC_E=2
     0x14 /* MDMCFG0  */, 0xF8, // CHANSPC_M=0xF8 (unused, single channel)
     // GFSK deviation ~47 kHz (h ≈ 0.94 at 100 kbps)

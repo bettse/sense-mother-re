@@ -14,10 +14,12 @@ RTL_DUR           ?= 30
 RTL_HITS          ?= /tmp/cookie_hits.json
 REPO_ROOT         := $(shell git rev-parse --show-toplevel 2>/dev/null || echo ../..)
 
-.PHONY: help build launch try monitor monitor-stop monitor-status log tail rtl parse sniff clean full tx sniff-tx rf-probe
+.PHONY: help build launch try monitor monitor-stop monitor-status log tail rtl parse sniff clean full tx sniff-tx rf-probe mother-cap
 
-WAIT  ?= 45
-COUNT ?= 1
+WAIT       ?= 45
+COUNT      ?= 1
+MOTHER_DUR ?= 180
+MOTHER_HITS ?= /tmp/mother_hits.json
 
 help:  ## Show this help
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -88,6 +90,17 @@ rf-probe:  ## Record 8s of raw IQ at 915 MHz while firing test-TX; report if sig
 		sleep 1; \
 		python3 $(REPO_ROOT)/scratch/fire_tx.py 4 1.5; \
 		wait $$probe_pid
+
+mother-cap:  ## rtl_433 capture for MOTHER_DUR sec (default $(MOTHER_DUR)) — then group by src/dst/port
+	@rm -f $(MOTHER_HITS)
+	@echo "*** Starting $(MOTHER_DUR)s rtl_433 capture -> $(MOTHER_HITS)"
+	@echo "*** Power the Mother ON now. Ctrl-C to stop early."
+	@timeout $(MOTHER_DUR) rtl_433 -f $(RTL_FREQ) -s 2400000 \
+		-X 'n=cookie,m=FSK_PCM,s=10,l=10,r=400,preamble=d391' \
+		-F "json:$(MOTHER_HITS)" -M level 2>/dev/null; true
+	@echo ""
+	@echo "*** Grouped by (src, dst, port), AP-originated first ***"
+	@python3 $(REPO_ROOT)/scratch/mother_analyze.py $(MOTHER_HITS)
 
 sniff-tx:  ## rtl_433 for RTL_DUR sec, auto-firing test-TX every 2s via sense_ap CLI, then scan
 	@rm -f $(RTL_HITS)
