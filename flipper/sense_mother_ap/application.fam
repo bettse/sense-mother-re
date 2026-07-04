@@ -1,0 +1,16 @@
+App(
+    appid="sense_mother_ap",
+    name="Sense Mother AP",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="sense_mother_ap_main",
+    stack_size=4 * 1024,
+    fap_category="Sub-GHz",
+    fap_version="0.1",
+    fap_author="ericbetts",
+    fap_description="RX-only prototype for sen.se Mother AP: CC1101 preset + PN9 dewhiten + SimpliciTI parse. Phase 1: dump frames to debug log.",
+    sources=[
+        "sense_mother_ap.c",
+        "pn9.c",
+        "frame_parse.c",
+    ],
+)
