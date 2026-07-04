@@ -159,6 +159,24 @@ static size_t build_join_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t
     return 18;
 }
 
+// Port-6 (MGMT) poll reply. Sleeper Cookies poll AP for store-and-forward
+// frames; TI's stock nwk_mgmt.c:222 (send_poll_reply) forwards a queued
+// frame or stays silent. We have no queue yet, so send a minimal ACK-shape
+// reply — REQ | REPLY_BIT + echoed TID — so the Cookie at least sees us
+// respond and keeps the link healthy. Later we can carry an application-
+// layer sensor-request payload in this same reply.
+static size_t build_poll_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t tid) {
+    // body = DST(4) + SRC(4) + PORT(1) + DEVINFO(1) + app(2) = 12
+    out[0] = 12;
+    memcpy(&out[1], cookie_addr, 4);
+    memcpy(&out[5], AP_ADDR, 4);
+    out[9] = 0x06;   // PORT = SMPL_PORT_MGMT
+    out[10] = 0x20;  // DEVINFO: sender=AP, hop=0
+    out[11] = 0x81;  // MGMT_REQ_POLL | REPLY_BIT
+    out[12] = tid;   // echo
+    return 13;
+}
+
 // Send a preformed frame via CC1101 packet-mode TX. The CC1101 auto-adds
 // PN9 whitening (WHITE_DATA=1) and CCITT CRC (CRC_EN=1) per our preset.
 //
@@ -222,6 +240,8 @@ typedef struct {
     uint32_t bad_count;
     uint32_t join_rx_count;  // Cookie Join broadcasts seen
     uint32_t join_tx_count;  // Join replies we've sent
+    uint32_t poll_rx_count;  // Port-6 MGMT polls addressed to us
+    uint32_t poll_tx_count;  // Poll replies we've sent
     uint8_t last_src[4];
     uint8_t last_port;
     int last_rssi;
@@ -275,7 +295,14 @@ static void render_cb(Canvas* c, void* ctx) {
     } else {
         canvas_draw_str(c, 2, 36, "listening…");
     }
-    snprintf(buf, sizeof(buf), "join rx:%lu tx:%lu", s.join_rx_count, s.join_tx_count);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "join %lu/%lu poll %lu/%lu",
+        s.join_rx_count,
+        s.join_tx_count,
+        s.poll_rx_count,
+        s.poll_tx_count);
     canvas_draw_str(c, 2, 56, buf);
     canvas_draw_str(c, 2, 63, "^=test-tx back=quit");
 }
@@ -506,6 +533,40 @@ static int32_t rx_thread(void* ctx) {
         s->last_join = is_join;
         if(is_join) s->join_rx_count++;
         furi_mutex_release(s->mutex);
+
+        // Phase 3: reply to port-6 MGMT polls addressed to our AP.
+        // Sleeper Cookies wake periodically to poll the AP; we reply so the
+        // link stays healthy and (later) can piggyback a data-request.
+        if(f.port == 6 && memcmp(f.dstaddr, AP_ADDR, 4) == 0 && f.payload_len >= 2) {
+            uint8_t poll_tid = f.payload[1];
+            uint8_t poll_port = f.payload_len >= 3 ? f.payload[2] : 0;
+            FURI_LOG_I(
+                TAG,
+                "port-6 POLL from %02x%02x%02x%02x tid=%u poll_port=%u",
+                f.srcaddr[0],
+                f.srcaddr[1],
+                f.srcaddr[2],
+                f.srcaddr[3],
+                poll_tid,
+                poll_port);
+
+            furi_mutex_acquire(s->mutex, FuriWaitForever);
+            s->poll_rx_count++;
+            furi_mutex_release(s->mutex);
+
+            uint8_t reply[24];
+            size_t reply_len = build_poll_reply(reply, f.srcaddr, poll_tid);
+            if(cc1101_tx_packet(reply, reply_len)) {
+                furi_mutex_acquire(s->mutex, FuriWaitForever);
+                s->poll_tx_count++;
+                furi_mutex_release(s->mutex);
+                FURI_LOG_I(TAG, "poll reply sent");
+            } else {
+                FURI_LOG_W(TAG, "poll reply TX failed");
+            }
+            cc1101_strobe(CC1101_STROBE_SFRX);
+            furi_hal_subghz_rx();
+        }
 
         // Phase 2: reply to Join broadcasts.
         // Sen.se's variant has a 1-byte prefix before the standard SimpliciTI
