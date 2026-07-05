@@ -403,8 +403,30 @@ static int32_t rx_thread(void* ctx) {
     furi_hal_subghz_rx();
 
     uint8_t frame[64];
+    uint32_t last_heartbeat_ms = furi_get_tick();
 
     while(s->running) {
+        // 30-second heartbeat so we can tell the RX worker is alive during
+        // quiet periods. Prints current counters + last RSSI so we can also
+        // spot when nothing came in vs when we're just missing UART flushes.
+        uint32_t now_ms = furi_get_tick();
+        if(now_ms - last_heartbeat_ms >= 30000) {
+            last_heartbeat_ms = now_ms;
+            furi_mutex_acquire(s->mutex, FuriWaitForever);
+            AppState snap = *s;
+            furi_mutex_release(s->mutex);
+            FURI_LOG_I(
+                TAG,
+                "heartbeat: rx=%lu bad=%lu join_rx=%lu tx=%lu poll_rx=%lu tx=%lu last_rssi=%d",
+                snap.frame_count,
+                snap.bad_count,
+                snap.join_rx_count,
+                snap.join_tx_count,
+                snap.poll_rx_count,
+                snap.poll_tx_count,
+                snap.last_rssi);
+        }
+
         // Manual test-TX: UP arrow on the Flipper sends a canned Join reply
         // to a fake Cookie address `CA FE F0 0D`, TID 0x42. Lets us iterate
         // on TX code without needing a live Join broadcast every time.
