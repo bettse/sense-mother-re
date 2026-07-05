@@ -186,12 +186,13 @@ static size_t build_poll_reply(uint8_t* out, const uint8_t* cookie_addr, uint8_t
 // in IDLE, and `furi_check(cc1101_wait_status_state(..., CC1101StateTX, 10000))`
 // inside furi_hal_subghz_tx tripped and rebooted the Flipper.
 static bool cc1101_tx_packet(const uint8_t* frame, size_t len) {
-    furi_hal_subghz_idle();
+    // Skip furi_hal_subghz_idle at start — SFTX is valid from RX per §10.4
+    // datasheet, and we came here from an RX-loop iteration so we're
+    // already in RX. Every SPI-acquire+wait_state round-trip adds ~1-2 ms;
+    // Cookie's Rx window for the Join reply is only ~single-digit ms.
     cc1101_strobe(CC1101_STROBE_SFTX);
     // Split: LEN via single-byte register write, body via burst. Combined
-    // burst writes trigger CC1101 TXFIFO_UNDERFLOW at end-of-packet — the
-    // chip apparently doesn't decode LEN correctly if it arrives inside a
-    // multi-byte burst. Split matches stock furi_hal_subghz_write_packet.
+    // burst writes trigger CC1101 TXFIFO_UNDERFLOW at end-of-packet.
     cc1101_write_single_reg(CC1101_FIFO, frame[0]);
     if(len > 1) cc1101_write_fifo(&frame[1], len - 1);
 
@@ -200,35 +201,11 @@ static bool cc1101_tx_packet(const uint8_t* frame, size_t len) {
         return false;
     }
 
-    // Snapshot MARCSTATE + TXBYTES immediately after TX starts. If the chip
-    // really is transmitting, MARCSTATE should be 0x13 (TX) briefly then 0x14
-    // (TX_END) then 0x01 (IDLE); TXBYTES should drain from 18 → 0. If the PA
-    // is silently gated we'd see MARCSTATE stuck or TXBYTES not draining.
-    uint8_t marc_start = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
-    uint8_t txb_start = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
-
-    // Transmission is autonomous once we're in TX. Sample MARCSTATE at three
-    // moments so we can tell "still transmitting" (13/14) from "clean IDLE"
-    // (01) from "underflowed mid-packet" (16). At 100 kbps, 20 on-air bytes
-    // finish in ~1.8 ms, so 5 ms mid, 50 ms late.
-    furi_delay_ms(5);
-    uint8_t marc_mid = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
-    uint8_t txb_mid = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
-
-    furi_delay_ms(45);
-    uint8_t marc_end = cc1101_read_status_reg(CC1101_STATUS_MARCSTATE) & 0x1F;
-    uint8_t txb_end = cc1101_read_status_reg(CC1101_STATUS_TXBYTES) & 0x7F;
-    FURI_LOG_I(
-        TAG,
-        "tx: MARCSTATE %02x@0 → %02x@5ms → %02x@50ms  TXBYTES %u/%u/%u",
-        marc_start,
-        marc_mid,
-        marc_end,
-        txb_start,
-        txb_mid,
-        txb_end);
-
-    furi_hal_subghz_idle();
+    // Transmission is autonomous. 20 on-air bytes @ 100 kbps ≈ 1.8 ms; blind
+    // delay 3 ms so the chip is safely past TX_END before caller re-enters
+    // RX. MCSM1 TXOFF_MODE default (00 = IDLE) drops us back to IDLE when
+    // the FIFO drains, no explicit idle() call needed.
+    furi_delay_ms(3);
     return true;
 }
 
