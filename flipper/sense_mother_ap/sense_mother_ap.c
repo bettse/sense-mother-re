@@ -334,12 +334,30 @@ static void input_pubsub_cb(const void* message, void* ctx) {
 static void sense_ap_cli_cb(PipeSide* pipe, FuriString* args, void* context) {
     UNUSED(pipe);
     App* app = context;
+    AppState* s = app->state;
     const char* arg = furi_string_get_cstr(args);
     if(strncmp(arg, "tx", 2) == 0) {
         app->test_tx_pending = true;
         printf("test-TX queued\r\n");
+    } else if(strncmp(arg, "stats", 5) == 0) {
+        furi_mutex_acquire(s->mutex, FuriWaitForever);
+        AppState snap = *s;
+        furi_mutex_release(s->mutex);
+        printf(
+            "rx: %lu  bad: %lu  join(rx/tx): %lu/%lu  poll(rx/tx): %lu/%lu  last_rssi: %d dBm  last_src: %02x%02x%02x%02x\r\n",
+            snap.frame_count,
+            snap.bad_count,
+            snap.join_rx_count,
+            snap.join_tx_count,
+            snap.poll_rx_count,
+            snap.poll_tx_count,
+            snap.last_rssi,
+            snap.last_src[0],
+            snap.last_src[1],
+            snap.last_src[2],
+            snap.last_src[3]);
     } else {
-        printf("usage: sense_ap tx\r\n");
+        printf("usage: sense_ap tx | sense_ap stats\r\n");
     }
 }
 
