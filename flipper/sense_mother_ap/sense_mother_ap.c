@@ -257,6 +257,10 @@ typedef struct {
     // instead of waiting for a Cookie Join. Cleared by the worker after it
     // fires so the button press behaves as a one-shot.
     volatile bool test_tx_pending;
+    // Sniff-only mode: RX + log everything as usual, but skip ALL TX
+    // (test-TX, Join reply, poll reply). Used when we want to catch the
+    // real Mother's Join reply without our AP racing it.
+    volatile bool sniff_only;
     FuriPubSub* input_events;
     FuriPubSubSubscription* input_sub;
 } App;
@@ -271,7 +275,7 @@ static void render_cb(Canvas* c, void* ctx) {
 
     canvas_clear(c);
     canvas_set_font(c, FontPrimary);
-    canvas_draw_str(c, 2, 10, "Sense Mother AP");
+    canvas_draw_str(c, 2, 10, app->sniff_only ? "Sense Sniff" : "Sense Mother AP");
 
     char buf[48];
     canvas_set_font(c, FontSecondary);
@@ -337,8 +341,20 @@ static void sense_ap_cli_cb(PipeSide* pipe, FuriString* args, void* context) {
     AppState* s = app->state;
     const char* arg = furi_string_get_cstr(args);
     if(strncmp(arg, "tx", 2) == 0) {
-        app->test_tx_pending = true;
-        printf("test-TX queued\r\n");
+        if(app->sniff_only) {
+            printf("sniff mode is on — test-TX suppressed. `sense_ap sniff off` first.\r\n");
+        } else {
+            app->test_tx_pending = true;
+            printf("test-TX queued\r\n");
+        }
+    } else if(strncmp(arg, "sniff on", 8) == 0) {
+        app->sniff_only = true;
+        printf("sniff mode ON — all TX (Join reply / poll reply / test-TX) suppressed\r\n");
+    } else if(strncmp(arg, "sniff off", 9) == 0) {
+        app->sniff_only = false;
+        printf("sniff mode OFF — TX handlers active\r\n");
+    } else if(strncmp(arg, "sniff", 5) == 0) {
+        printf("sniff mode is %s\r\n", app->sniff_only ? "ON" : "OFF");
     } else if(strncmp(arg, "stats", 5) == 0) {
         furi_mutex_acquire(s->mutex, FuriWaitForever);
         AppState snap = *s;
@@ -357,7 +373,8 @@ static void sense_ap_cli_cb(PipeSide* pipe, FuriString* args, void* context) {
             snap.last_src[2],
             snap.last_src[3]);
     } else {
-        printf("usage: sense_ap tx | sense_ap stats\r\n");
+        printf(
+            "usage: sense_ap tx | sense_ap stats | sense_ap sniff [on|off]\r\n");
     }
 }
 
@@ -448,7 +465,7 @@ static int32_t rx_thread(void* ctx) {
         // Manual test-TX: UP arrow on the Flipper sends a canned Join reply
         // to a fake Cookie address `CA FE F0 0D`, TID 0x42. Lets us iterate
         // on TX code without needing a live Join broadcast every time.
-        if(app->test_tx_pending) {
+        if(app->test_tx_pending && !app->sniff_only) {
             app->test_tx_pending = false;
             static const uint8_t FAKE_COOKIE[4] = {0xCA, 0xFE, 0xF0, 0x0D};
             uint8_t reply[24];
@@ -532,7 +549,16 @@ static int32_t rx_thread(void* ctx) {
         SenseFrame f;
         if(!sense_frame_parse(frame, frame_len, &f)) {
             s->bad_count++;
-            FURI_LOG_W(TAG, "malformed frame len=%u", len_byte);
+            // Dump full raw bytes so we can eyeball unusual-length frames
+            // (Mother's Join reply might be a compact form our parser rejects).
+            char raw_hex[128] = {0};
+            size_t rh_off = 0;
+            for(size_t i = 0; i < frame_len && rh_off < sizeof(raw_hex) - 3; i++) {
+                rh_off +=
+                    snprintf(raw_hex + rh_off, sizeof(raw_hex) - rh_off, "%02x", frame[i]);
+            }
+            FURI_LOG_W(TAG, "malformed frame len=%u raw=%s", len_byte, raw_hex);
+            cc1101_strobe(CC1101_STROBE_SRX);
             continue;
         }
 
@@ -574,10 +600,17 @@ static int32_t rx_thread(void* ctx) {
         if(is_join) s->join_rx_count++;
         furi_mutex_release(s->mutex);
 
+        // Belt-and-braces: MCSM1 default should keep us in RX after a packet,
+        // but some paths (idle-during-TX, sniff-mode skipping the post-TX RX
+        // kick, chip errata) can leave the chip out of RX. Explicit SRX after
+        // every frame ensures we're listening for the next one.
+        cc1101_strobe(CC1101_STROBE_SRX);
+
         // Phase 3: reply to port-6 MGMT polls addressed to our AP.
         // Sleeper Cookies wake periodically to poll the AP; we reply so the
         // link stays healthy and (later) can piggyback a data-request.
-        if(f.port == 6 && memcmp(f.dstaddr, AP_ADDR, 4) == 0 && f.payload_len >= 2) {
+        if(f.port == 6 && memcmp(f.dstaddr, AP_ADDR, 4) == 0 && f.payload_len >= 2 &&
+           !app->sniff_only) {
             uint8_t poll_tid = f.payload[1];
             uint8_t poll_port = f.payload_len >= 3 ? f.payload[2] : 0;
             FURI_LOG_I(
@@ -611,7 +644,7 @@ static int32_t rx_thread(void* ctx) {
         // Phase 2: reply to Join broadcasts.
         // Sen.se's variant has a 1-byte prefix before the standard SimpliciTI
         // Join body, so TID lives at payload[2] not payload[1]. See JOIN.md.
-        if(is_join && f.payload_len >= 3) {
+        if(is_join && f.payload_len >= 3 && !app->sniff_only) {
             uint8_t tid = f.payload[2];
             uint8_t reply[24];
             size_t reply_len = build_join_reply(reply, f.srcaddr, tid);
